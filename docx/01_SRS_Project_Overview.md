@@ -6,8 +6,9 @@ APTIS GO is a goal-oriented e-learning web platform engineered to scaffold unive
 ## 2. Core Technological Paradigm
 - **Architecture**: Decoupled Client-Server (SPA communicating via RESTful API).
 - **Marking Engine**: Hybrid Assessment Pipeline[cite: 1, 2].
-  - **Auto-Marking**: Instant algorithmic validation for Reading, Listening, and Grammar questions (< 500ms)[cite: 1, 2].
-  - **Manual Marking**: Qualitative rubric-based human grading with feedback loops for Speaking (audio submissions) and Writing (text prompts)[cite: 1, 2].
+  - **Auto-Marking**: Instant algorithmic validation for Reading (0–50), Listening (0–50), and Core (Grammar & Vocabulary, 0–50) questions (< 500ms)[cite: 1, 2].
+  - **Manual Marking**: Qualitative rubric-based human grading with feedback loops for Speaking (audio submissions, 0–50) and Writing (text prompts, 0–50)[cite: 1, 2].
+  - **Scoring Architecture**: Standard 0–200 scaled aggregate across the 4 skills, with the Core (0–50) serving as an institutional CEFR Borderline Modifier to resolve boundary candidates.
 
 ## 3. User Roles & Access Boundaries
 - **Student**: Takes diagnostic placement test, sets certificate goal/deadline, follows daily task roadmaps, takes mock exams, submits audio/text responses, reviews qualitative instructor feedback[cite: 1, 2].

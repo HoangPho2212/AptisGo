@@ -6,7 +6,7 @@
 - **FR01 (Auth & RBAC)**: User registration and login with bcrypt hashing and JWT authorization for Student, Lecturer, and Admin roles[cite: 1, 3].
 - **FR02 (Placement Diagnostic)**: Automated diagnostic test computing student CEFR baseline (A1–C1)[cite: 1, 2].
 - **FR03 (Goal Tracking)**: Target certificate selection (B1/B2) and deadline tracking[cite: 1, 2].
-- **FR04 (Auto-Marking Engine)**: Instant scoring for Reading, Listening, and Grammar sections[cite: 1, 2].
+- **FR04 (Auto-Marking Engine)**: Instant scoring for Reading (0–50), Listening (0–50), and Core (Grammar & Vocabulary, 0–50) sections with CEFR Borderline Modifier resolution[cite: 1, 2].
 - **FR05 (Audio Submission)**: Multipart form/audio recording upload for Speaking prompts[cite: 1, 2].
 - **FR06 (Lecturer Review Workspace)**: Pending queue display, audio playback player, text reader, score input, and qualitative feedback logging[cite: 1, 2].
 
