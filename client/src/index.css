@@ -1,0 +1,12 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-aptis-accent: #14b8a6;
+  --color-aptis-surface: #0f172a;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}

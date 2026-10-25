@@ -5,13 +5,13 @@
 
 const SKILLS = ['core', 'listening', 'reading', 'writing', 'speaking'];
 const QUESTION_TYPES = [
-  'mcq_single',     // Core Grammar, Listening Parts 1 & 4
+  'mcq_single', // Core Grammar, Listening Parts 1 & 4
   'dropdown_match', // Core Vocab, Listening Parts 2 & 3, Reading Parts 3 & 4
   'dropdown_cloze', // Reading Part 1 (short gap-fill)
   'sentence_order', // Reading Part 2 (sentence ordering / cohesion)
-  'short_fields',   // Writing Part 1 (5 registration fields)
-  'essay_text',     // Writing Parts 2, 3, 4a, 4b
-  'audio_record'    // Speaking Parts 1-4
+  'short_fields', // Writing Part 1 (5 registration fields)
+  'essay_text', // Writing Parts 2, 3, 4a, 4b
+  'audio_record', // Speaking Parts 1-4
 ];
 
 /**
@@ -21,15 +21,21 @@ const QUESTION_TYPES = [
  */
 function validateQuestionSubDoc(doc) {
   if (!doc) return { isValid: false, error: 'Document is undefined' };
-  
+
   // Normalize legacy skill 'grammar' to 'core'
   const skill = doc.skill === 'grammar' ? 'core' : doc.skill;
   if (!SKILLS.includes(skill)) {
-    return { isValid: false, error: `Invalid skill '${doc.skill}'. Must be one of: ${SKILLS.join(', ')}` };
+    return {
+      isValid: false,
+      error: `Invalid skill '${doc.skill}'. Must be one of: ${SKILLS.join(', ')}`,
+    };
   }
 
   if (!QUESTION_TYPES.includes(doc.questionType)) {
-    return { isValid: false, error: `Invalid questionType '${doc.questionType}'. Must be one of: ${QUESTION_TYPES.join(', ')}` };
+    return {
+      isValid: false,
+      error: `Invalid questionType '${doc.questionType}'. Must be one of: ${QUESTION_TYPES.join(', ')}`,
+    };
   }
 
   if (!doc.part || doc.part < 1 || doc.part > 4) {
@@ -119,7 +125,7 @@ function calculateCefrProfile(scores) {
     reading: mapSkillToCefr(reading),
     listening: mapSkillToCefr(listening),
     writing: mapSkillToCefr(writing),
-    speaking: mapSkillToCefr(speaking)
+    speaking: mapSkillToCefr(speaking),
   };
 
   let borderlineElevated = false;
@@ -151,7 +157,7 @@ function calculateCefrProfile(scores) {
     skillScores: { reading, listening, writing, speaking },
     skillCefr: resolvedSkillCefr,
     borderlineElevated,
-    finalCefr
+    finalCefr,
   };
 }
 
@@ -190,5 +196,5 @@ module.exports = {
   validateWritingWordCount,
   calculateCefrProfile,
   validateSpeakingTimerConfig,
-  validateListeningPlaysLimit
+  validateListeningPlaysLimit,
 };
