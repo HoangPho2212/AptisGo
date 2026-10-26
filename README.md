@@ -8,11 +8,12 @@ APTIS GO combines instant auto-marking for receptive skills with lecturer rubric
 review for productive skills, then resolves a CEFR profile using the official
 Aptis 0–200 scale and the Core module as a borderline modifier.
 
-> **Status: Sprint 2 — AG-101 scaffold complete.**
+> **Status: Sprint 2 — AG-102 persistence complete.**
 > The repository now contains two decoupled applications: `client/` (React 19 +
-> Vite 8 + TailwindCSS 4) and `server/` (Node.js + Express 5), both gated by
-> ESLint 10 and Prettier 3. Domain features, MongoDB models, and authentication
-> arrive in the next tickets.
+> Vite 8 + TailwindCSS 4) and `server/` (Node.js + Express 5), gated by ESLint 10
+> and Prettier 3. The API connects to MongoDB Atlas through a pooled Mongoose
+> connection and ships the `User` model. Authentication routes, other models,
+> and the domain UI arrive in the next tickets.
 
 ---
 
@@ -89,18 +90,19 @@ flowchart LR
 
 ## Tech stack
 
-**Implemented in this scaffold (AG-101):**
+**Implemented so far:**
 
 - **Frontend (`client/`):** React 19.3, Vite 8.3, TailwindCSS 4.3 (CSS-first),
   ESLint 10 flat config, Prettier 3.
 - **Backend (`server/`):** Node.js ≥ 20.19, Express 5.3, Helmet, CORS, dotenv,
   ESLint 10, Prettier 3.
+- **Database:** MongoDB Atlas via Mongoose 9 with an explicit connection pool
+  (max 10 / min 2, 5 s server selection, 30 s idle recycling), bcryptjs cost 12.
 - **Tests:** Node.js built-in `node:test` — no test-framework dependency.
 
 **Planned (see the SAD and ADS documents):**
 
-- MongoDB with Mongoose ODM, JWT + bcryptjs, Multer, React Query / Axios,
-  MediaRecorder API.
+- JWT auth routes, Multer uploads, React Query / Axios, MediaRecorder API.
 
 ## Repository layout
 
@@ -114,22 +116,30 @@ flowchart LR
 │   └── package.json
 ├── server/                          # Express API (CommonJS)
 │   ├── src/app.js                   # Exported app: /api/health, 404, error handler
-│   ├── src/server.js                # Env loading, listen, graceful shutdown
+│   ├── src/server.js                # Connect DB, listen, graceful shutdown
+│   ├── src/config/database.js       # Atlas URI + pool Contract
+│   ├── src/models/User.js           # User schema, indexes, password hooks
+│   ├── src/utils/password.js        # bcryptjs hash/verify (cost 12)
 │   ├── eslint.config.js             # Node globals
 │   └── package.json
 ├── contracts/
 │   └── JayContract.js               # Shared Contract: enums, validators, CEFR scoring
 ├── design-log/
 │   ├── #0001-aptis-format-alignment.md
-│   └── #0002-client-server-scaffold.md
+│   ├── #0002-client-server-scaffold.md
+│   └── #0003-mongodb-pool-user-schema.md
 ├── diagrams/                        # Exported architecture diagrams (PNG)
 ├── docx/                            # SRS, SAD, DDS, ADS, CSG, BRD, STP
 ├── prototype/
 │   └── prototype.html               # Interactive clickable prototype
 ├── tests/
 │   ├── aptis-contract.test.js       # Aptis domain Contract suite
+│   ├── database.test.js             # Pool options + URI validation
+│   ├── password.test.js             # bcrypt hashing Contract
 │   ├── scaffold.test.js             # AG-101 structure + manifest Contract
-│   └── server-health.test.js        # /api/health and 404 Contract
+│   ├── server-health.test.js        # /api/health and 404 Contract
+│   ├── user-model.test.js           # User schema, indexes, redaction
+│   └── user-repository.integration.test.js  # opt-in real MongoDB check
 ├── eslint.config.js                 # Root (Node) flat config
 ├── .prettierrc.json                 # Shared formatting
 ├── package.json                     # Root command delegation
@@ -155,6 +165,22 @@ npm run install:all
 `install:all` installs the root tooling plus the independent `client/` and
 `server/` dependency trees. Each app keeps its own lockfile.
 
+### Configure the server environment
+
+```bash
+cp server/.env.example server/.env
+```
+
+Set `MONGODB_URI` in `server/.env` to your Atlas connection string:
+
+```text
+MONGODB_URI=mongodb+srv://<user>:<password>@<cluster>.mongodb.net/aptis-go?retryWrites=true&w=majority
+```
+
+The API **fails fast** (exit code 1) when `MONGODB_URI` is missing or does not
+start with `mongodb://` / `mongodb+srv://`. Never commit `server/.env`; it is
+already ignored. In Atlas, add your current IP under **Network Access**.
+
 ### Run both applications
 
 ```bash
@@ -166,24 +192,35 @@ npm run dev:client
 ```
 
 The Vite dev server proxies `/api` to `http://localhost:5000`, so the landing
-page reports the live API status. Copy `.env.example` to `.env` in either app
-only when you need to override `PORT`, `CLIENT_ORIGIN`, or `VITE_API_URL`.
+page reports the live API status. The client reads `VITE_API_URL` only when you
+need to bypass the proxy.
 
 ### Quality gates
 
 ```bash
-npm test                        # Node contract + scaffold tests
+npm test                        # unit, Contract, and scaffold tests
 npm run lint                    # root, client, and server ESLint
 npm run format:check            # Prettier verification
 npm --prefix client run build   # production SPA build to client/dist
 ```
 
-Expected test result:
+Expected test result (the integration test is skipped without a database):
 
 ```text
-ℹ tests 12
-ℹ pass 12
+ℹ tests 31
+ℹ pass 30
 ℹ fail 0
+ℹ skipped 1
+```
+
+Run the real-database check against Atlas or a local MongoDB:
+
+```bash
+# bash
+MONGODB_TEST_URI="mongodb://127.0.0.1:27017/aptis-go-test" node --test tests/user-repository.integration.test.js
+
+# PowerShell
+$env:MONGODB_TEST_URI="mongodb://127.0.0.1:27017/aptis-go-test"; node --test tests/user-repository.integration.test.js
 ```
 
 > Quote the glob. On some shells `tests/*.test.js` is expanded before Node sees
@@ -204,11 +241,14 @@ built with Vite for production.
 
 ## Testing
 
-| Suite         | Command                         | Scope                                                                                                                    |
-| ------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Contract      | `node --test "tests/*.test.js"` | Core scaling, CEFR borderline elevation, question validation, writing word limits, speaking timers, listening play limit |
-| Scaffold      | `node --test "tests/*.test.js"` | Client/server paths, manifest scripts and engines, flat ESLint configs, Prettier Contract                                |
-| Server health | `node --test "tests/*.test.js"` | `GET /api/health` response Contract, 404 Contract, hidden Express fingerprint                                            |
+| Suite            | Command                                                                      | Scope                                                                                                                    |
+| ---------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Contract         | `node --test "tests/*.test.js"`                                              | Core scaling, CEFR borderline elevation, question validation, writing word limits, speaking timers, listening play limit |
+| Scaffold         | `node --test "tests/*.test.js"`                                              | Client/server paths, manifest scripts and engines, flat ESLint configs, Prettier Contract                                |
+| Server health    | `node --test "tests/*.test.js"`                                              | `GET /api/health` response Contract, 404 Contract, hidden Express fingerprint                                            |
+| Database         | `node --test "tests/*.test.js"`                                              | Pool defaults and bounds, URI scheme rejection, safe disconnect                                                          |
+| User schema      | `node --test "tests/*.test.js"`                                              | Required fields, email normalization, enums, indexes, password hashing, JSON redaction                                   |
+| Mongo round-trip | `MONGODB_TEST_URI=... node --test tests/user-repository.integration.test.js` | Real MongoDB save, bcrypt hash, `UNTESTED` default, duplicate-email rejection                                            |
 
 TDD is mandatory: write the failing test first, confirm the failure, implement,
 then re-run. Do not weaken a test to make a suite pass.
@@ -255,17 +295,18 @@ gitGraph
 
 ## Documentation
 
-| File                                         | Contents                                    |
-| -------------------------------------------- | ------------------------------------------- |
-| `docx/01_SRS_Project_Overview.md`            | Scope, roles, KPIs                          |
-| `docx/02_SAD_System_Architecture.md`         | C4 views, containers, components            |
-| `docx/03_DDS_Database_Schema.md`             | Mongoose schemas                            |
-| `docx/04_ADS_API_Specification.md.md`        | REST endpoints                              |
-| `docx/05_CSG_Coding_Standards.md`            | Security and coding directives              |
-| `docx/06_BRD_MoSCoW_and_User_Stories.md.md`  | Requirements and user stories               |
-| `docx/07_STP_Test_Plan_and_RTM.md`           | Test plan and traceability matrix           |
-| `design-log/#0001-aptis-format-alignment.md` | Aptis format and scoring decisions          |
-| `design-log/#0002-client-server-scaffold.md` | AG-101 scaffold, lint, and format decisions |
+| File                                           | Contents                                         |
+| ---------------------------------------------- | ------------------------------------------------ |
+| `docx/01_SRS_Project_Overview.md`              | Scope, roles, KPIs                               |
+| `docx/02_SAD_System_Architecture.md`           | C4 views, containers, components                 |
+| `docx/03_DDS_Database_Schema.md`               | Mongoose schemas                                 |
+| `docx/04_ADS_API_Specification.md.md`          | REST endpoints                                   |
+| `docx/05_CSG_Coding_Standards.md`              | Security and coding directives                   |
+| `docx/06_BRD_MoSCoW_and_User_Stories.md.md`    | Requirements and user stories                    |
+| `docx/07_STP_Test_Plan_and_RTM.md`             | Test plan and traceability matrix                |
+| `design-log/#0001-aptis-format-alignment.md`   | Aptis format and scoring decisions               |
+| `design-log/#0002-client-server-scaffold.md`   | AG-101 scaffold, lint, and format decisions      |
+| `design-log/#0003-mongodb-pool-user-schema.md` | AG-102 pool, User schema, and password decisions |
 
 ## Engineering rules
 
@@ -284,6 +325,7 @@ gitGraph
 
 - [x] Sprint 1 — Aptis format alignment, Contract, prototype, Contract tests (v0.1.0)
 - [x] AG-101 — Decoupled client/server scaffold with ESLint and Prettier
+- [x] AG-102 — MongoDB Atlas pool and `User` schema
 - [ ] Sprint 2 — Express API and Mongoose models per ADS/DDS
 - [ ] Sprint 3 — Student SPA: placement, goals, study plan
 - [ ] Sprint 4 — Lecturer workspace and hybrid grading pipeline
