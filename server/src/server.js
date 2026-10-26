@@ -1,6 +1,7 @@
 require('dotenv').config({ quiet: true });
 
 const app = require('./app');
+const { assertAuthConfig } = require('./config/auth');
 const { connectDatabase, disconnectDatabase } = require('./config/database');
 
 const port = Number(process.env.PORT) || 5000;
@@ -9,6 +10,7 @@ const port = Number(process.env.PORT) || 5000;
 let server = null;
 
 async function start() {
+  assertAuthConfig();
   await connectDatabase();
 
   server = app.listen(port, () => {

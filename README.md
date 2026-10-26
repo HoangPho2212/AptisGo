@@ -8,12 +8,13 @@ APTIS GO combines instant auto-marking for receptive skills with lecturer rubric
 review for productive skills, then resolves a CEFR profile using the official
 Aptis 0–200 scale and the Core module as a borderline modifier.
 
-> **Status: Sprint 2 — AG-102 persistence complete.**
+> **Status: Sprint 2 — AG-103 authentication complete.**
 > The repository now contains two decoupled applications: `client/` (React 19 +
 > Vite 8 + TailwindCSS 4) and `server/` (Node.js + Express 5), gated by ESLint 10
 > and Prettier 3. The API connects to MongoDB Atlas through a pooled Mongoose
-> connection and ships the `User` model. Authentication routes, other models,
-> and the domain UI arrive in the next tickets.
+> connection, ships the `User` model, and issues stateless HS256 JWTs from
+> `POST /api/auth/register` and `POST /api/auth/login`. Protected-route
+> middleware, the remaining models, and the domain UI arrive next.
 
 ---
 
@@ -22,6 +23,7 @@ Aptis 0–200 scale and the Core module as a borderline modifier.
 - [How it works](#how-it-works)
 - [Official Aptis alignment](#official-aptis-alignment)
 - [User roles](#user-roles)
+- [Authentication API](#authentication-api)
 - [Tech stack](#tech-stack)
 - [Repository layout](#repository-layout)
 - [Getting started](#getting-started)
@@ -88,6 +90,37 @@ flowchart LR
 | **Lecturer** | Pending review queue, audio streaming, essay review, rubric scoring, published feedback                                         |
 | **Admin**    | User management, system analytics, question bank authoring with embedded question sub-documents                                 |
 
+## Authentication API
+
+| Method | Path                 | Access | Success                          |
+| ------ | -------------------- | ------ | -------------------------------- |
+| `POST` | `/api/auth/register` | Public | `201 { token, tokenType, user }` |
+| `POST` | `/api/auth/login`    | Public | `200 { token, tokenType, user }` |
+
+```bash
+curl -X POST http://localhost:5000/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Amina Yusuf","email":"amina@university.edu","password":"Placement2026!"}'
+
+curl -X POST http://localhost:5000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"amina@university.edu","password":"Placement2026!"}'
+```
+
+Registration always creates `role: "student"` and `currentLevel: "UNTESTED"`;
+`role` and `currentLevel` in the body are ignored. Passwords are hashed with
+bcrypt cost 12 and never returned. Tokens are HS256, expire after `1h`
+(`JWT_EXPIRES_IN`), and carry `sub`, `role`, `iss: aptis-go-api`,
+`aud: aptis-go-client`. Future protected endpoints expect:
+
+```http
+Authorization: Bearer <token>
+```
+
+Failure Contracts: `400 Validation failed` with `details[]`, `409 Email is
+already registered`, and `401 Invalid email or password` for both unknown email
+and wrong password.
+
 ## Tech stack
 
 **Implemented so far:**
@@ -95,14 +128,15 @@ flowchart LR
 - **Frontend (`client/`):** React 19.3, Vite 8.3, TailwindCSS 4.3 (CSS-first),
   ESLint 10 flat config, Prettier 3.
 - **Backend (`server/`):** Node.js ≥ 20.19, Express 5.3, Helmet, CORS, dotenv,
-  ESLint 10, Prettier 3.
+  jsonwebtoken 9 (HS256), bcryptjs cost 12, ESLint 10, Prettier 3.
 - **Database:** MongoDB Atlas via Mongoose 9 with an explicit connection pool
-  (max 10 / min 2, 5 s server selection, 30 s idle recycling), bcryptjs cost 12.
+  (max 10 / min 2, 5 s server selection, 30 s idle recycling).
 - **Tests:** Node.js built-in `node:test` — no test-framework dependency.
 
 **Planned (see the SAD and ADS documents):**
 
-- JWT auth routes, Multer uploads, React Query / Axios, MediaRecorder API.
+- `requireAuth` / `requireRole` middleware, Multer uploads, React Query / Axios,
+  MediaRecorder API.
 
 ## Repository layout
 
@@ -115,11 +149,16 @@ flowchart LR
 │   ├── vite.config.js               # React + Tailwind plugins, /api proxy
 │   └── package.json
 ├── server/                          # Express API (CommonJS)
-│   ├── src/app.js                   # Exported app: /api/health, 404, error handler
-│   ├── src/server.js                # Connect DB, listen, graceful shutdown
+│   ├── src/app.js                   # Exported app: health, auth, 404, errors
+│   ├── src/server.js                # Validate config, connect DB, listen
+│   ├── src/config/auth.js           # JWT secret/issuer/audience Contract
 │   ├── src/config/database.js       # Atlas URI + pool Contract
+│   ├── src/controllers/authController.js  # register, login
 │   ├── src/models/User.js           # User schema, indexes, password hooks
+│   ├── src/routes/authRoutes.js     # /api/auth router
+│   ├── src/utils/jwt.js             # sign/verify HS256 access tokens
 │   ├── src/utils/password.js        # bcryptjs hash/verify (cost 12)
+│   ├── src/validators/authValidator.js    # pure input validation
 │   ├── eslint.config.js             # Node globals
 │   └── package.json
 ├── contracts/
@@ -127,14 +166,19 @@ flowchart LR
 ├── design-log/
 │   ├── #0001-aptis-format-alignment.md
 │   ├── #0002-client-server-scaffold.md
-│   └── #0003-mongodb-pool-user-schema.md
+│   ├── #0003-mongodb-pool-user-schema.md
+│   └── #0004-auth-controller-jwt.md
 ├── diagrams/                        # Exported architecture diagrams (PNG)
 ├── docx/                            # SRS, SAD, DDS, ADS, CSG, BRD, STP
 ├── prototype/
 │   └── prototype.html               # Interactive clickable prototype
 ├── tests/
 │   ├── aptis-contract.test.js       # Aptis domain Contract suite
+│   ├── auth-routes.test.js          # /api/auth 400 Contract without a DB
+│   ├── auth-validator.test.js       # register/login validation matrix
+│   ├── auth.integration.test.js     # opt-in register/login round-trip
 │   ├── database.test.js             # Pool options + URI validation
+│   ├── jwt.test.js                  # claims, expiry, tamper rejection
 │   ├── password.test.js             # bcrypt hashing Contract
 │   ├── scaffold.test.js             # AG-101 structure + manifest Contract
 │   ├── server-health.test.js        # /api/health and 404 Contract
@@ -181,6 +225,20 @@ The API **fails fast** (exit code 1) when `MONGODB_URI` is missing or does not
 start with `mongodb://` / `mongodb+srv://`. Never commit `server/.env`; it is
 already ignored. In Atlas, add your current IP under **Network Access**.
 
+Set a JWT signing secret of at least 32 characters:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
+```
+
+```text
+JWT_SECRET=<paste-the-generated-value>
+JWT_EXPIRES_IN=1h
+```
+
+The API also **fails fast** when `JWT_SECRET` is missing or shorter than 32
+characters.
+
 ### Run both applications
 
 ```bash
@@ -207,10 +265,10 @@ npm --prefix client run build   # production SPA build to client/dist
 Expected test result (the integration test is skipped without a database):
 
 ```text
-ℹ tests 31
-ℹ pass 30
+ℹ tests 48
+ℹ pass 46
 ℹ fail 0
-ℹ skipped 1
+ℹ skipped 2
 ```
 
 Run the real-database check against Atlas or a local MongoDB:
@@ -248,6 +306,10 @@ built with Vite for production.
 | Server health    | `node --test "tests/*.test.js"`                                              | `GET /api/health` response Contract, 404 Contract, hidden Express fingerprint                                            |
 | Database         | `node --test "tests/*.test.js"`                                              | Pool defaults and bounds, URI scheme rejection, safe disconnect                                                          |
 | User schema      | `node --test "tests/*.test.js"`                                              | Required fields, email normalization, enums, indexes, password hashing, JSON redaction                                   |
+| Auth validator   | `node --test "tests/*.test.js"`                                              | Register/login normalization, bounds, forced server fields                                                               |
+| JWT              | `node --test "tests/*.test.js"`                                              | Claims, expiry, tamper/wrong-secret rejection, secret strength                                                           |
+| Auth routes      | `node --test "tests/*.test.js"`                                              | 400 Contracts for register/login without a database                                                                      |
+| Auth round-trip  | `MONGODB_TEST_URI=... node --test tests/auth.integration.test.js`            | Register 201, role forcing, bcrypt, duplicate 409, login 200/401, token claims                                           |
 | Mongo round-trip | `MONGODB_TEST_URI=... node --test tests/user-repository.integration.test.js` | Real MongoDB save, bcrypt hash, `UNTESTED` default, duplicate-email rejection                                            |
 
 TDD is mandatory: write the failing test first, confirm the failure, implement,
@@ -307,6 +369,7 @@ gitGraph
 | `design-log/#0001-aptis-format-alignment.md`   | Aptis format and scoring decisions               |
 | `design-log/#0002-client-server-scaffold.md`   | AG-101 scaffold, lint, and format decisions      |
 | `design-log/#0003-mongodb-pool-user-schema.md` | AG-102 pool, User schema, and password decisions |
+| `design-log/#0004-auth-controller-jwt.md`      | AG-103 register/login and JWT decisions          |
 
 ## Engineering rules
 
@@ -326,6 +389,7 @@ gitGraph
 - [x] Sprint 1 — Aptis format alignment, Contract, prototype, Contract tests (v0.1.0)
 - [x] AG-101 — Decoupled client/server scaffold with ESLint and Prettier
 - [x] AG-102 — MongoDB Atlas pool and `User` schema
+- [x] AG-103 — Register/login with bcrypt and stateless JWT
 - [ ] Sprint 2 — Express API and Mongoose models per ADS/DDS
 - [ ] Sprint 3 — Student SPA: placement, goals, study plan
 - [ ] Sprint 4 — Lecturer workspace and hybrid grading pipeline
