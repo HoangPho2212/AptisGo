@@ -2,6 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 
+const authRoutes = require('./routes/authRoutes');
+
 const app = express();
 
 app.disable('x-powered-by');
@@ -21,6 +23,8 @@ app.get('/api/health', (_request, response) => {
     timestamp: new Date().toISOString(),
   });
 });
+
+app.use('/api/auth', authRoutes);
 
 app.use((request, response) => {
   response.status(404).json({
