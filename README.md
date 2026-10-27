@@ -8,14 +8,15 @@ APTIS GO combines instant auto-marking for receptive skills with lecturer rubric
 review for productive skills, then resolves a CEFR profile using the official
 Aptis 0–200 scale and the Core module as a borderline modifier.
 
-> **Status: Sprint 2 — AG-104 authorization complete.**
+> **Status: Sprint 2 — AG-105 hardening complete.**
 > The repository now contains two decoupled applications: `client/` (React 19 +
 > Vite 8 + TailwindCSS 4) and `server/` (Node.js + Express 5), gated by ESLint 10
 > and Prettier 3. The API connects to MongoDB Atlas through a pooled Mongoose
 > connection, ships the `User` model, issues stateless HS256 JWTs from
-> `POST /api/auth/register` and `POST /api/auth/login`, and exposes
-> `verifyToken` plus role guards for student, lecturer, and admin routes.
-> Protected domain routes, the remaining models, and the domain UI arrive next.
+> `POST /api/auth/register` and `POST /api/auth/login`, exposes `verifyToken`
+> plus role guards, sanitizes MongoDB operator keys, and centralizes error
+> responses. Protected domain routes, the remaining models, and the domain UI
+> arrive next.
 
 ---
 
@@ -149,6 +150,34 @@ typo crashes on startup instead of silently blocking every request.
 
 ❌ `authorizeRoles('admin'), verifyToken`
 
+## Security and errors
+
+`express-mongo-sanitize` runs after `express.json()` and before routes. It
+rewrites MongoDB operator keys in bodies and query strings:
+
+| Input key      | Sanitized key  |
+| -------------- | -------------- |
+| `$gt`          | `_gt`          |
+| `$where`       | `_where`       |
+| `profile.name` | `profile_name` |
+| `filter.$gt`   | `filter_$gt`   |
+
+The adapter in `server/src/middleware/mongoSanitize.js` makes the package work
+with Express 5, where `request.query` is getter-only.
+
+The centralized handler in `server/src/middleware/errorHandler.js` returns:
+
+| Error               | Status | Body                                             |
+| ------------------- | ------ | ------------------------------------------------ |
+| Malformed JSON      | `400`  | `{ error: "Invalid JSON payload" }`              |
+| Body over 1 MB      | `413`  | `{ error: "Payload too large" }`                 |
+| Mongoose validation | `400`  | `{ error: "Validation failed", details: [...] }` |
+| Invalid Mongoose id | `400`  | `{ error: "Invalid identifier" }`                |
+| Duplicate key       | `409`  | `{ error: "Resource already exists" }`           |
+| Unknown failure     | `500`  | `{ error: "Internal Server Error" }`             |
+
+Unknown 5xx details are logged server-side and never returned to the client.
+
 ## Tech stack
 
 **Implemented so far:**
@@ -156,7 +185,8 @@ typo crashes on startup instead of silently blocking every request.
 - **Frontend (`client/`):** React 19.3, Vite 8.3, TailwindCSS 4.3 (CSS-first),
   ESLint 10 flat config, Prettier 3.
 - **Backend (`server/`):** Node.js ≥ 20.19, Express 5.3, Helmet, CORS, dotenv,
-  jsonwebtoken 9 (HS256), bcryptjs cost 12, ESLint 10, Prettier 3.
+  jsonwebtoken 9 (HS256), bcryptjs cost 12, express-mongo-sanitize 2.2, ESLint
+  10, Prettier 3.
 - **Database:** MongoDB Atlas via Mongoose 9 with an explicit connection pool
   (max 10 / min 2, 5 s server selection, 30 s idle recycling).
 - **Tests:** Node.js built-in `node:test` — no test-framework dependency.
@@ -183,6 +213,8 @@ typo crashes on startup instead of silently blocking every request.
 │   ├── src/config/database.js       # Atlas URI + pool Contract
 │   ├── src/controllers/authController.js  # register, login
 │   ├── src/middleware/authMiddleware.js   # verifyToken, authorizeRoles
+│   ├── src/middleware/errorHandler.js     # 404 + centralized error mapping
+│   ├── src/middleware/mongoSanitize.js    # Express 5 adapter for sanitization
 │   ├── src/models/User.js           # User schema, indexes, password hooks
 │   ├── src/routes/authRoutes.js     # /api/auth router
 │   ├── src/utils/jwt.js             # sign/verify HS256 access tokens
@@ -197,7 +229,8 @@ typo crashes on startup instead of silently blocking every request.
 │   ├── #0002-client-server-scaffold.md
 │   ├── #0003-mongodb-pool-user-schema.md
 │   ├── #0004-auth-controller-jwt.md
-│   └── #0005-rbac-middleware.md
+│   ├── #0005-rbac-middleware.md
+│   └── #0006-nosql-sanitization-error-handler.md
 ├── diagrams/                        # Exported architecture diagrams (PNG)
 ├── docx/                            # SRS, SAD, DDS, ADS, CSG, BRD, STP
 ├── prototype/
@@ -209,7 +242,9 @@ typo crashes on startup instead of silently blocking every request.
 │   ├── auth-validator.test.js       # register/login validation matrix
 │   ├── auth.integration.test.js     # opt-in register/login round-trip
 │   ├── database.test.js             # Pool options + URI validation
+│   ├── error-handler.test.js        # centralized error Contract
 │   ├── jwt.test.js                  # claims, expiry, tamper rejection
+│   ├── mongo-sanitize.test.js       # NoSQL key sanitization + Express 5 adapter
 │   ├── password.test.js             # bcrypt hashing Contract
 │   ├── scaffold.test.js             # AG-101 structure + manifest Contract
 │   ├── server-health.test.js        # /api/health and 404 Contract
@@ -296,8 +331,8 @@ npm --prefix client run build   # production SPA build to client/dist
 Expected test result (both integration tests are skipped without a database):
 
 ```text
-ℹ tests 72
-ℹ pass 70
+ℹ tests 85
+ℹ pass 83
 ℹ fail 0
 ℹ skipped 2
 ```
@@ -341,6 +376,8 @@ built with Vite for production.
 | JWT              | `node --test "tests/*.test.js"`                                              | Claims, expiry, tamper/wrong-secret rejection, secret strength                                                           |
 | Auth routes      | `node --test "tests/*.test.js"`                                              | 400 Contracts for register/login without a database                                                                      |
 | RBAC middleware  | `node --test "tests/*.test.js"`                                              | Bearer parsing, invalid/expired tokens, role allow/deny, 401/403 Contracts, config errors                                |
+| NoSQL sanitizer  | `node --test "tests/*.test.js"`                                              | Operator/dotted-key rewriting, nested body data, Express 5 compatibility, ordinary requests                              |
+| Error handler    | `node --test "tests/*.test.js"`                                              | JSON parse, payload limit, validation, cast, duplicate key, generic 500, headersSent, 404 Contract                       |
 | Auth round-trip  | `MONGODB_TEST_URI=... node --test tests/auth.integration.test.js`            | Register 201, role forcing, bcrypt, duplicate 409, login 200/401, token claims                                           |
 | Mongo round-trip | `MONGODB_TEST_URI=... node --test tests/user-repository.integration.test.js` | Real MongoDB save, bcrypt hash, `UNTESTED` default, duplicate-email rejection                                            |
 
@@ -389,20 +426,21 @@ gitGraph
 
 ## Documentation
 
-| File                                           | Contents                                         |
-| ---------------------------------------------- | ------------------------------------------------ |
-| `docx/01_SRS_Project_Overview.md`              | Scope, roles, KPIs                               |
-| `docx/02_SAD_System_Architecture.md`           | C4 views, containers, components                 |
-| `docx/03_DDS_Database_Schema.md`               | Mongoose schemas                                 |
-| `docx/04_ADS_API_Specification.md.md`          | REST endpoints                                   |
-| `docx/05_CSG_Coding_Standards.md`              | Security and coding directives                   |
-| `docx/06_BRD_MoSCoW_and_User_Stories.md.md`    | Requirements and user stories                    |
-| `docx/07_STP_Test_Plan_and_RTM.md`             | Test plan and traceability matrix                |
-| `design-log/#0001-aptis-format-alignment.md`   | Aptis format and scoring decisions               |
-| `design-log/#0002-client-server-scaffold.md`   | AG-101 scaffold, lint, and format decisions      |
-| `design-log/#0003-mongodb-pool-user-schema.md` | AG-102 pool, User schema, and password decisions |
-| `design-log/#0004-auth-controller-jwt.md`      | AG-103 register/login and JWT decisions          |
-| `design-log/#0005-rbac-middleware.md`          | AG-104 verifyToken and role-guard decisions      |
+| File                                                   | Contents                                         |
+| ------------------------------------------------------ | ------------------------------------------------ |
+| `docx/01_SRS_Project_Overview.md`                      | Scope, roles, KPIs                               |
+| `docx/02_SAD_System_Architecture.md`                   | C4 views, containers, components                 |
+| `docx/03_DDS_Database_Schema.md`                       | Mongoose schemas                                 |
+| `docx/04_ADS_API_Specification.md.md`                  | REST endpoints                                   |
+| `docx/05_CSG_Coding_Standards.md`                      | Security and coding directives                   |
+| `docx/06_BRD_MoSCoW_and_User_Stories.md.md`            | Requirements and user stories                    |
+| `docx/07_STP_Test_Plan_and_RTM.md`                     | Test plan and traceability matrix                |
+| `design-log/#0001-aptis-format-alignment.md`           | Aptis format and scoring decisions               |
+| `design-log/#0002-client-server-scaffold.md`           | AG-101 scaffold, lint, and format decisions      |
+| `design-log/#0003-mongodb-pool-user-schema.md`         | AG-102 pool, User schema, and password decisions |
+| `design-log/#0004-auth-controller-jwt.md`              | AG-103 register/login and JWT decisions          |
+| `design-log/#0005-rbac-middleware.md`                  | AG-104 verifyToken and role-guard decisions      |
+| `design-log/#0006-nosql-sanitization-error-handler.md` | AG-105 sanitization and error Contract           |
 
 ## Engineering rules
 
@@ -424,6 +462,7 @@ gitGraph
 - [x] AG-102 — MongoDB Atlas pool and `User` schema
 - [x] AG-103 — Register/login with bcrypt and stateless JWT
 - [x] AG-104 — JWT verification and role-based access guards
+- [x] AG-105 — NoSQL sanitization and centralized error handling
 - [ ] Sprint 2 — Express API and Mongoose models per ADS/DDS
 - [ ] Sprint 3 — Student SPA: placement, goals, study plan
 - [ ] Sprint 4 — Lecturer workspace and hybrid grading pipeline

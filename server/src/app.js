@@ -3,6 +3,8 @@ const cors = require('cors');
 const helmet = require('helmet');
 
 const authRoutes = require('./routes/authRoutes');
+const mongoSanitize = require('./middleware/mongoSanitize');
+const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
 
 const app = express();
 
@@ -15,6 +17,7 @@ app.use(
   })
 );
 app.use(express.json({ limit: '1mb' }));
+app.use(mongoSanitize);
 
 app.get('/api/health', (_request, response) => {
   response.status(200).json({
@@ -26,18 +29,7 @@ app.get('/api/health', (_request, response) => {
 
 app.use('/api/auth', authRoutes);
 
-app.use((request, response) => {
-  response.status(404).json({
-    error: 'Not Found',
-    path: request.originalUrl,
-  });
-});
-
-app.use((error, _request, response, _next) => {
-  const status = Number.isInteger(error.status) ? error.status : 500;
-  response.status(status).json({
-    error: status >= 500 ? 'Internal Server Error' : error.message,
-  });
-});
+app.use(notFoundHandler);
+app.use(errorHandler);
 
 module.exports = app;
