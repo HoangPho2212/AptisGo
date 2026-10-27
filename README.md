@@ -8,13 +8,14 @@ APTIS GO combines instant auto-marking for receptive skills with lecturer rubric
 review for productive skills, then resolves a CEFR profile using the official
 Aptis 0–200 scale and the Core module as a borderline modifier.
 
-> **Status: Sprint 2 — AG-103 authentication complete.**
+> **Status: Sprint 2 — AG-104 authorization complete.**
 > The repository now contains two decoupled applications: `client/` (React 19 +
 > Vite 8 + TailwindCSS 4) and `server/` (Node.js + Express 5), gated by ESLint 10
 > and Prettier 3. The API connects to MongoDB Atlas through a pooled Mongoose
-> connection, ships the `User` model, and issues stateless HS256 JWTs from
-> `POST /api/auth/register` and `POST /api/auth/login`. Protected-route
-> middleware, the remaining models, and the domain UI arrive next.
+> connection, ships the `User` model, issues stateless HS256 JWTs from
+> `POST /api/auth/register` and `POST /api/auth/login`, and exposes
+> `verifyToken` plus role guards for student, lecturer, and admin routes.
+> Protected domain routes, the remaining models, and the domain UI arrive next.
 
 ---
 
@@ -121,6 +122,33 @@ Failure Contracts: `400 Validation failed` with `details[]`, `409 Email is
 already registered`, and `401 Invalid email or password` for both unknown email
 and wrong password.
 
+### Protecting routes
+
+```javascript
+const router = require('express').Router();
+const { verifyToken, authorizeRoles } = require('../middleware/authMiddleware');
+
+router.get('/profile', verifyToken, (request, response) => {
+  response.json({ user: request.user });
+});
+
+router.get('/admin', verifyToken, authorizeRoles('admin'), handler);
+```
+
+`verifyToken` accepts `Authorization: Bearer <token>`, verifies signature,
+issuer, audience, expiry, and claims, then attaches
+`request.user = { id, role }`. It returns `401` for a missing, malformed,
+invalid, or expired token.
+
+`authorizeRoles(...)` must be mounted **after** `verifyToken`. It returns `403
+Forbidden` when the token is valid but the role is not allowed, and `401` when
+no identity has been attached. Role names are validated at wiring time, so a
+typo crashes on startup instead of silently blocking every request.
+
+✅ `verifyToken, authorizeRoles('lecturer', 'admin')`
+
+❌ `authorizeRoles('admin'), verifyToken`
+
 ## Tech stack
 
 **Implemented so far:**
@@ -135,8 +163,8 @@ and wrong password.
 
 **Planned (see the SAD and ADS documents):**
 
-- `requireAuth` / `requireRole` middleware, Multer uploads, React Query / Axios,
-  MediaRecorder API.
+- Multer uploads, React Query / Axios, MediaRecorder API, protected domain
+  routes.
 
 ## Repository layout
 
@@ -154,6 +182,7 @@ and wrong password.
 │   ├── src/config/auth.js           # JWT secret/issuer/audience Contract
 │   ├── src/config/database.js       # Atlas URI + pool Contract
 │   ├── src/controllers/authController.js  # register, login
+│   ├── src/middleware/authMiddleware.js   # verifyToken, authorizeRoles
 │   ├── src/models/User.js           # User schema, indexes, password hooks
 │   ├── src/routes/authRoutes.js     # /api/auth router
 │   ├── src/utils/jwt.js             # sign/verify HS256 access tokens
@@ -167,13 +196,15 @@ and wrong password.
 │   ├── #0001-aptis-format-alignment.md
 │   ├── #0002-client-server-scaffold.md
 │   ├── #0003-mongodb-pool-user-schema.md
-│   └── #0004-auth-controller-jwt.md
+│   ├── #0004-auth-controller-jwt.md
+│   └── #0005-rbac-middleware.md
 ├── diagrams/                        # Exported architecture diagrams (PNG)
 ├── docx/                            # SRS, SAD, DDS, ADS, CSG, BRD, STP
 ├── prototype/
 │   └── prototype.html               # Interactive clickable prototype
 ├── tests/
 │   ├── aptis-contract.test.js       # Aptis domain Contract suite
+│   ├── auth-middleware.test.js      # verifyToken + authorizeRoles Contract
 │   ├── auth-routes.test.js          # /api/auth 400 Contract without a DB
 │   ├── auth-validator.test.js       # register/login validation matrix
 │   ├── auth.integration.test.js     # opt-in register/login round-trip
@@ -262,11 +293,11 @@ npm run format:check            # Prettier verification
 npm --prefix client run build   # production SPA build to client/dist
 ```
 
-Expected test result (the integration test is skipped without a database):
+Expected test result (both integration tests are skipped without a database):
 
 ```text
-ℹ tests 48
-ℹ pass 46
+ℹ tests 72
+ℹ pass 70
 ℹ fail 0
 ℹ skipped 2
 ```
@@ -309,6 +340,7 @@ built with Vite for production.
 | Auth validator   | `node --test "tests/*.test.js"`                                              | Register/login normalization, bounds, forced server fields                                                               |
 | JWT              | `node --test "tests/*.test.js"`                                              | Claims, expiry, tamper/wrong-secret rejection, secret strength                                                           |
 | Auth routes      | `node --test "tests/*.test.js"`                                              | 400 Contracts for register/login without a database                                                                      |
+| RBAC middleware  | `node --test "tests/*.test.js"`                                              | Bearer parsing, invalid/expired tokens, role allow/deny, 401/403 Contracts, config errors                                |
 | Auth round-trip  | `MONGODB_TEST_URI=... node --test tests/auth.integration.test.js`            | Register 201, role forcing, bcrypt, duplicate 409, login 200/401, token claims                                           |
 | Mongo round-trip | `MONGODB_TEST_URI=... node --test tests/user-repository.integration.test.js` | Real MongoDB save, bcrypt hash, `UNTESTED` default, duplicate-email rejection                                            |
 
@@ -370,6 +402,7 @@ gitGraph
 | `design-log/#0002-client-server-scaffold.md`   | AG-101 scaffold, lint, and format decisions      |
 | `design-log/#0003-mongodb-pool-user-schema.md` | AG-102 pool, User schema, and password decisions |
 | `design-log/#0004-auth-controller-jwt.md`      | AG-103 register/login and JWT decisions          |
+| `design-log/#0005-rbac-middleware.md`          | AG-104 verifyToken and role-guard decisions      |
 
 ## Engineering rules
 
@@ -390,6 +423,7 @@ gitGraph
 - [x] AG-101 — Decoupled client/server scaffold with ESLint and Prettier
 - [x] AG-102 — MongoDB Atlas pool and `User` schema
 - [x] AG-103 — Register/login with bcrypt and stateless JWT
+- [x] AG-104 — JWT verification and role-based access guards
 - [ ] Sprint 2 — Express API and Mongoose models per ADS/DDS
 - [ ] Sprint 3 — Student SPA: placement, goals, study plan
 - [ ] Sprint 4 — Lecturer workspace and hybrid grading pipeline
