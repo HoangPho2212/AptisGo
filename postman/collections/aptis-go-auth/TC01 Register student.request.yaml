@@ -1,0 +1,42 @@
+$kind: http-request
+name: TC01 Register student (happy)
+method: POST
+url: '{{baseUrl}}/api/auth/register'
+order: 1000
+headers:
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "name": "QA Student",
+      "email": "{{qaEmail}}",
+      "password": "{{qaPassword}}"
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const body = pm.response.json();
+
+      pm.test('TC01 status is 201 Created', () => {
+        pm.response.to.have.status(201);
+      });
+
+      pm.test('TC01 returns a Bearer JWT', () => {
+        pm.expect(body.tokenType).to.eql('Bearer');
+        pm.expect(body.token).to.be.a('string');
+        pm.expect(body.token.length).to.be.greaterThan(0);
+        pm.expect(body.token.split('.')).to.have.lengthOf(3);
+      });
+
+      pm.test('TC01 returns a student account without a password', () => {
+        pm.expect(body.user).to.be.an('object');
+        pm.expect(body.user.email).to.eql(pm.collectionVariables.get('qaEmail'));
+        pm.expect(body.user.role).to.eql('student');
+        pm.expect(body.user.currentLevel).to.eql('UNTESTED');
+        pm.expect(body.user).to.not.have.property('password');
+      });
+
+      pm.collectionVariables.set('studentToken', body.token);

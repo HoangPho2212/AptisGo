@@ -1,0 +1,24 @@
+$kind: collection
+name: APTIS GO Auth
+description: Registration and login contract checks for TC01-TC03.
+variables:
+  - key: baseUrl
+    value: 'http://localhost:5000'
+    description: API origin. Override with --env-var baseUrl=... for another target.
+  - key: qaEmail
+    value: ''
+    description: Generated once per collection run by the pre-request script.
+  - key: qaPassword
+    value: 'Placement2026!'
+    description: Test-only password; never a production credential.
+  - key: studentToken
+    value: ''
+    description: JWT captured by the registration or login request.
+scripts:
+  - type: http:beforeRequest
+    language: text/javascript
+    code: |-
+      if (!pm.collectionVariables.get('qaEmail')) {
+        const suffix = `${Date.now()}.${Math.floor(Math.random() * 1000000)}`;
+        pm.collectionVariables.set('qaEmail', `qa.${suffix}@greenwich.edu.vn`);
+      }
