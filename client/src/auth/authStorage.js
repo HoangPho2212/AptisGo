@@ -46,6 +46,10 @@ export function readSession() {
   }
 }
 
+export function getAccessToken() {
+  return readSession()?.token ?? null;
+}
+
 export function clearSession() {
   globalThis.sessionStorage?.removeItem(AUTH_STORAGE_KEY);
 }
