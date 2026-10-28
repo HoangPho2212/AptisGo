@@ -8,7 +8,7 @@ APTIS GO combines instant auto-marking for receptive skills with lecturer rubric
 review for productive skills, then resolves a CEFR profile using the official
 Aptis 0–200 scale and the Core module as a borderline modifier.
 
-> **Status: Sprint 2 - AG-106 authentication portal complete.**
+> **Status: Sprint 2 - AG-107 auth context and protected routes complete.**
 > The repository now contains two decoupled applications: `client/` (React 19 +
 > Vite 8 + TailwindCSS 4) and `server/` (Node.js + Express 5), gated by ESLint 10
 > and Prettier 3. The API connects to MongoDB Atlas through a pooled Mongoose
@@ -17,8 +17,10 @@ Aptis 0–200 scale and the Core module as a borderline modifier.
 > plus role guards, sanitizes MongoDB operator keys, and centralizes error
 > responses. The public authentication portal now serves `/login` and
 > `/register` with role-aware sign-in, Greenwich institutional-email
-> validation, and a mandatory GDPR consent gate. Protected domain routes, the
-> remaining models, and the domain workspace arrive next.
+> validation, and a mandatory GDPR consent gate. A React `AuthContext` restores
+> the tab session, Axios attaches the JWT to API requests, and role-specific
+> `/student`, `/lecturer`, and `/admin` workspaces are protected by
+> `ProtectedRoute`. The remaining models and domain workspace arrive next.
 
 ---
 
@@ -152,6 +154,34 @@ typo crashes on startup instead of silently blocking every request.
 
 ❌ `authorizeRoles('admin'), verifyToken`
 
+### Client session and route guards
+
+`AuthProvider` owns the in-memory session and restores it from `sessionStorage`
+under `aptis-go.auth`. The Axios request interceptor reads the token through
+`getAccessToken()` and sends `Authorization: Bearer <token>` on every request.
+A `401` response clears the stored session, emits
+`aptis-go:auth-unauthorized`, and the provider resets its state so the guard
+returns the user to `/login`.
+
+| Client route    | Guard                                        |
+| --------------- | -------------------------------------------- |
+| `/`             | `RoleHomeRedirect` → role workspace or login |
+| `/login`        | Public; authenticated users go to `/`        |
+| `/register`     | Public; authenticated users go to `/`        |
+| `/student`      | `ProtectedRoute allowedRoles={['student']}`  |
+| `/lecturer`     | `ProtectedRoute allowedRoles={['lecturer']}` |
+| `/admin`        | `ProtectedRoute allowedRoles={['admin']}`    |
+| `/unauthorized` | Explains a role mismatch without logging out |
+| `*`             | Redirects to `/login`                        |
+
+A role mismatch is rejected before the session is saved. Client guards are a
+navigation aid only; the Express API remains the authorization boundary, so
+protected server routes still need `verifyToken` and `authorizeRoles`.
+
+✅ Student token opens `/student`; `/lecturer` redirects to `/unauthorized`.
+
+❌ Hiding `/admin` in React without `authorizeRoles('admin')` on the API route.
+
 ## Security and errors
 
 `express-mongo-sanitize` runs after `express.json()` and before routes. It
@@ -184,8 +214,8 @@ Unknown 5xx details are logged server-side and never returned to the client.
 
 **Implemented so far:**
 
-- **Frontend (`client/`):** React 19.3, React Router 7, Vite 8.3, TailwindCSS 4.3 (CSS-first),
-  ESLint 10 flat config, Prettier 3.
+- **Frontend (`client/`):** React 19.3, React Router 7, Axios 1.21, Vite 8.3,
+  TailwindCSS 4.3 (CSS-first), ESLint 10 flat config, Prettier 3.
 - **Backend (`server/`):** Node.js ≥ 20.19, Express 5.3, Helmet, CORS, dotenv,
   jsonwebtoken 9 (HS256), bcryptjs cost 12, express-mongo-sanitize 2.2, ESLint
   10, Prettier 3.
@@ -195,15 +225,14 @@ Unknown 5xx details are logged server-side and never returned to the client.
 
 **Planned (see the SAD and ADS documents):**
 
-- Multer uploads, React Query / Axios, MediaRecorder API, protected domain
-  routes.
+- Multer uploads, React Query, MediaRecorder API, and the domain workspace.
 
 ## Repository layout
 
 ```text
 .
 ├── client/                          # React SPA (ESM)
-│   ├── src/App.jsx                  # Router: /login, /register, session gate
+│   ├── src/App.jsx                  # Router: auth portal, role workspaces, guards
 │   ├── src/index.css                # TailwindCSS entry (@import + @theme)
 │   ├── eslint.config.js             # Browser globals + React hooks rules
 │   ├── vite.config.js               # React + Tailwind plugins, /api proxy
@@ -232,7 +261,9 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── #0003-mongodb-pool-user-schema.md
 │   ├── #0004-auth-controller-jwt.md
 │   ├── #0005-rbac-middleware.md
-│   └── #0006-nosql-sanitization-error-handler.md
+│   ├── #0006-nosql-sanitization-error-handler.md
+│   ├── #0007-authentication-portal.md
+│   └── #0008-auth-context-axios-protected-routes.md
 ├── diagrams/                        # Exported architecture diagrams (PNG)
 ├── docx/                            # SRS, SAD, DDS, ADS, CSG, BRD, STP
 ├── prototype/
@@ -262,16 +293,22 @@ Frontend test files:
 
 - `tests/auth-validation.test.jsx` — validation Contract
 - `tests/auth-portal.test.jsx` — route, role, API, session, and consent behaviour
+- `tests/auth-context.test.jsx` — session restore, login/register, logout, and 401 state
+- `tests/axios-client.test.jsx` — Bearer header and error normalization
+- `tests/protected-route.test.jsx` — unauthenticated, wrong-role, and allowed-role routes
 - `tests/setup.js` — Testing Library cleanup and matchers
-- `vitest.config.mjs` — jsdom, React dedupe, and `tests/**/*.test.jsx` discovery
+- `vitest.config.mjs` — jsdom, React/Axios dedupe, and `tests/**/*.test.jsx` discovery
 
 Auth portal modules:
 
 - `client/src/auth/authValidation.js` — institutional domain, password, student ID, and consent rules
-- `client/src/auth/api.js` — `/api/auth` fetch wrapper and `ApiError`
+- `client/src/auth/apiClient.js` — Axios instance, Bearer request interceptor, 401 handling
+- `client/src/auth/api.js` — `/api/auth` request wrappers and `ApiError` re-export
+- `client/src/auth/AuthProvider.jsx` — session context, login/register/logout
+- `client/src/auth/ProtectedRoute.jsx` — role-based navigation guard
 - `client/src/auth/authStorage.js` — tab-scoped session persistence
 - `client/src/auth/AuthLayout.jsx`, `RoleSelector.jsx`, `FormField.jsx`, `PasswordField.jsx`, `ConsentField.jsx`, `AuthAlert.jsx`
-- `client/src/pages/LoginPage.jsx`, `RegisterPage.jsx`, `SessionPage.jsx`
+- `client/src/pages/LoginPage.jsx`, `RegisterPage.jsx`, `WorkspacePage.jsx`, `AccessDeniedPage.jsx`
 
 ## Getting started
 
@@ -334,7 +371,8 @@ npm run dev:client
 
 The Vite dev server proxies `/api` to `http://localhost:5000`. Open
 `http://localhost:5173/login` or `http://localhost:5173/register` to use the
-authentication portal. The client reads `VITE_API_URL` only when you need to
+authentication portal; signed-in users are redirected to `/student`,
+`/lecturer`, or `/admin`. The client reads `VITE_API_URL` only when you need to
 bypass the proxy. `VITE_INSTITUTIONAL_EMAIL_DOMAINS` controls the accepted
 institutional domains and defaults to `greenwich.edu.vn`.
 
@@ -342,7 +380,7 @@ institutional domains and defaults to `greenwich.edu.vn`.
 
 ```bash
 npm test                        # API unit, Contract, and scaffold tests
-npm run test:ui                 # React auth-portal tests (Vitest + jsdom)
+npm run test:ui                 # React auth, Axios, and route-guard tests
 npm run lint                    # root, client, and server ESLint
 npm run format:check            # Prettier verification
 npm --prefix client run build   # production SPA build to client/dist
@@ -360,8 +398,8 @@ Expected test result (both integration tests are skipped without a database):
 Expected UI result:
 
 ```text
-ℹ tests 26
-ℹ pass 26
+ℹ tests 44
+ℹ pass 44
 ℹ fail 0
 ```
 
@@ -410,6 +448,9 @@ built with Vite for production.
 | Error handler    | `node --test "tests/*.test.js"`                                              | JSON parse, payload limit, validation, cast, duplicate key, generic 500, headersSent, 404 Contract                       |
 | Auth validation  | `npm run test:ui`                                                            | Institutional domain, password/student-ID bounds, role and consent rules                                                 |
 | Auth portal      | `npm run test:ui`                                                            | `/login`, `/register`, role mismatch, API calls, session save, redirects, sign out                                       |
+| Axios client     | `npm run test:ui`                                                            | Bearer request header, 401 session clearing, server/network `ApiError` normalization                                     |
+| Auth context     | `npm run test:ui`                                                            | Session restore, login/register, logout, role mismatch, 401 state reset                                                  |
+| Protected routes | `npm run test:ui`                                                            | Unauthenticated redirect, wrong-role denial, allowed roles, role-home redirect, access-denied recovery                   |
 | Auth round-trip  | `MONGODB_TEST_URI=... node --test tests/auth.integration.test.js`            | Register 201, role forcing, bcrypt, duplicate 409, login 200/401, token claims                                           |
 | Mongo round-trip | `MONGODB_TEST_URI=... node --test tests/user-repository.integration.test.js` | Real MongoDB save, bcrypt hash, `UNTESTED` default, duplicate-email rejection                                            |
 
@@ -458,22 +499,23 @@ gitGraph
 
 ## Documentation
 
-| File                                                   | Contents                                         |
-| ------------------------------------------------------ | ------------------------------------------------ |
-| `docx/01_SRS_Project_Overview.md`                      | Scope, roles, KPIs                               |
-| `docx/02_SAD_System_Architecture.md`                   | C4 views, containers, components                 |
-| `docx/03_DDS_Database_Schema.md`                       | Mongoose schemas                                 |
-| `docx/04_ADS_API_Specification.md.md`                  | REST endpoints                                   |
-| `docx/05_CSG_Coding_Standards.md`                      | Security and coding directives                   |
-| `docx/06_BRD_MoSCoW_and_User_Stories.md.md`            | Requirements and user stories                    |
-| `docx/07_STP_Test_Plan_and_RTM.md`                     | Test plan and traceability matrix                |
-| `design-log/#0001-aptis-format-alignment.md`           | Aptis format and scoring decisions               |
-| `design-log/#0002-client-server-scaffold.md`           | AG-101 scaffold, lint, and format decisions      |
-| `design-log/#0003-mongodb-pool-user-schema.md`         | AG-102 pool, User schema, and password decisions |
-| `design-log/#0004-auth-controller-jwt.md`              | AG-103 register/login and JWT decisions          |
-| `design-log/#0005-rbac-middleware.md`                  | AG-104 verifyToken and role-guard decisions      |
-| `design-log/#0006-nosql-sanitization-error-handler.md` | AG-105 sanitization and error Contract           |
-| `design-log/#0007-authentication-portal.md`            | AG-106 auth portal, role, email, and consent     |
+| File                                                      | Contents                                         |
+| --------------------------------------------------------- | ------------------------------------------------ |
+| `docx/01_SRS_Project_Overview.md`                         | Scope, roles, KPIs                               |
+| `docx/02_SAD_System_Architecture.md`                      | C4 views, containers, components                 |
+| `docx/03_DDS_Database_Schema.md`                          | Mongoose schemas                                 |
+| `docx/04_ADS_API_Specification.md.md`                     | REST endpoints                                   |
+| `docx/05_CSG_Coding_Standards.md`                         | Security and coding directives                   |
+| `docx/06_BRD_MoSCoW_and_User_Stories.md.md`               | Requirements and user stories                    |
+| `docx/07_STP_Test_Plan_and_RTM.md`                        | Test plan and traceability matrix                |
+| `design-log/#0001-aptis-format-alignment.md`              | Aptis format and scoring decisions               |
+| `design-log/#0002-client-server-scaffold.md`              | AG-101 scaffold, lint, and format decisions      |
+| `design-log/#0003-mongodb-pool-user-schema.md`            | AG-102 pool, User schema, and password decisions |
+| `design-log/#0004-auth-controller-jwt.md`                 | AG-103 register/login and JWT decisions          |
+| `design-log/#0005-rbac-middleware.md`                     | AG-104 verifyToken and role-guard decisions      |
+| `design-log/#0006-nosql-sanitization-error-handler.md`    | AG-105 sanitization and error Contract           |
+| `design-log/#0007-authentication-portal.md`               | AG-106 auth portal, role, email, and consent     |
+| `design-log/#0008-auth-context-axios-protected-routes.md` | AG-107 AuthContext, Axios JWT, and route guards  |
 
 ## Engineering rules
 
@@ -496,7 +538,8 @@ gitGraph
 - [x] AG-103 — Register/login with bcrypt and stateless JWT
 - [x] AG-104 — JWT verification and role-based access guards
 - [x] AG-105 — NoSQL sanitization and centralized error handling
-- [x] AG-106 — Authentication portal (`/login`, `/register`)
+- [x] AG-106 - Authentication portal (`/login`, `/register`)
+- [x] AG-107 - AuthContext, Axios JWT interceptors, and protected role routes
 - [ ] Sprint 2 — Express API and Mongoose models per ADS/DDS
 - [ ] Sprint 3 — Student SPA: placement, goals, study plan
 - [ ] Sprint 4 — Lecturer workspace and hybrid grading pipeline

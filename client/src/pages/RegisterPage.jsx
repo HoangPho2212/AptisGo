@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 
 import AuthAlert from '../auth/AuthAlert.jsx';
 import AuthLayout from '../auth/AuthLayout.jsx';
@@ -7,9 +7,10 @@ import ConsentField from '../auth/ConsentField.jsx';
 import FormField from '../auth/FormField.jsx';
 import PasswordField from '../auth/PasswordField.jsx';
 import RoleSelector from '../auth/RoleSelector.jsx';
-import { ApiError, registerRequest } from '../auth/api.js';
-import { saveSession } from '../auth/authStorage.js';
+import { ApiError } from '../auth/api.js';
+import { AuthError } from '../auth/authError.js';
 import { normalizeEmail, validateRegisterForm } from '../auth/authValidation.js';
+import { useAuth } from '../auth/useAuth.js';
 
 const INITIAL_VIEW_STATE = {
   name: '',
@@ -22,11 +23,16 @@ const INITIAL_VIEW_STATE = {
 
 export default function RegisterPage() {
   const navigate = useNavigate();
+  const { isAuthenticated, register } = useAuth();
   const [viewState, setViewState] = useState(INITIAL_VIEW_STATE);
   const [fieldErrors, setFieldErrors] = useState({});
   const [formError, setFormError] = useState(null);
   const [details, setDetails] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  if (isAuthenticated) {
+    return <Navigate to="/" replace />;
+  }
 
   function updateField(field) {
     return (event) => {
@@ -57,18 +63,18 @@ export default function RegisterPage() {
     setIsSubmitting(true);
 
     try {
-      const session = await registerRequest({
+      await register({
         name: viewState.name.trim(),
         email: normalizeEmail(viewState.email),
         password: viewState.password,
         studentId: viewState.studentId,
       });
-
-      saveSession(session);
       navigate('/', { replace: true });
     } catch (error) {
       setFormError(
-        error instanceof ApiError ? error.message : 'Something went wrong. Please try again.'
+        error instanceof ApiError || error instanceof AuthError
+          ? error.message
+          : 'Something went wrong. Please try again.'
       );
       setDetails(error instanceof ApiError ? error.details : []);
     } finally {

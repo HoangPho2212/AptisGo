@@ -46,7 +46,14 @@ function CheckItem({ children }) {
   );
 }
 
-export default function AuthLayout({ eyebrow, title, subtitle, children, footer }) {
+export default function AuthLayout({
+  eyebrow,
+  title,
+  subtitle,
+  children,
+  footer,
+  asideLabel = 'Screen 1 · Access gateway',
+}) {
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#06111f] text-slate-100">
       <div
@@ -61,7 +68,7 @@ export default function AuthLayout({ eyebrow, title, subtitle, children, footer 
           <div className="max-w-lg">
             <p className="mb-4 inline-flex items-center gap-2 rounded-full border border-teal-400/20 bg-teal-400/10 px-3 py-1 text-xs font-semibold tracking-[0.18em] text-teal-300 uppercase">
               <span className="size-1.5 rounded-full bg-teal-300" />
-              Screen 1 · Access gateway
+              {asideLabel}
             </p>
             <h2 className="text-5xl leading-[1.05] font-semibold tracking-tight text-white">
               Practice with purpose.

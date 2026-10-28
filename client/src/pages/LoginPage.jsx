@@ -1,14 +1,15 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 
 import AuthAlert from '../auth/AuthAlert.jsx';
 import AuthLayout from '../auth/AuthLayout.jsx';
 import FormField from '../auth/FormField.jsx';
 import PasswordField from '../auth/PasswordField.jsx';
 import RoleSelector from '../auth/RoleSelector.jsx';
-import { ApiError, loginRequest } from '../auth/api.js';
-import { saveSession } from '../auth/authStorage.js';
-import { getRoleLabel, normalizeEmail, validateLoginForm } from '../auth/authValidation.js';
+import { ApiError } from '../auth/api.js';
+import { AuthError } from '../auth/authError.js';
+import { normalizeEmail, validateLoginForm } from '../auth/authValidation.js';
+import { useAuth } from '../auth/useAuth.js';
 
 const INITIAL_VIEW_STATE = {
   email: '',
@@ -18,11 +19,18 @@ const INITIAL_VIEW_STATE = {
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { isAuthenticated, login } = useAuth();
   const [viewState, setViewState] = useState(INITIAL_VIEW_STATE);
   const [fieldErrors, setFieldErrors] = useState({});
   const [formError, setFormError] = useState(null);
   const [details, setDetails] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const redirectTo = location.state?.from ?? '/';
+
+  if (isAuthenticated) {
+    return <Navigate to={redirectTo} replace />;
+  }
 
   function updateField(field) {
     return (event) => {
@@ -53,25 +61,17 @@ export default function LoginPage() {
     setIsSubmitting(true);
 
     try {
-      const session = await loginRequest({
+      await login({
         email: normalizeEmail(viewState.email),
         password: viewState.password,
+        role: viewState.role,
       });
-      const actualRole = session?.user?.role;
-
-      if (actualRole !== viewState.role) {
-        const actualLabel = getRoleLabel(actualRole);
-        setFormError(
-          `This account is registered as a ${actualLabel}. Select ${actualLabel} to continue.`
-        );
-        return;
-      }
-
-      saveSession(session);
-      navigate('/', { replace: true });
+      navigate(redirectTo, { replace: true });
     } catch (error) {
       setFormError(
-        error instanceof ApiError ? error.message : 'Something went wrong. Please try again.'
+        error instanceof ApiError || error instanceof AuthError
+          ? error.message
+          : 'Something went wrong. Please try again.'
       );
       setDetails(error instanceof ApiError ? error.details : []);
     } finally {

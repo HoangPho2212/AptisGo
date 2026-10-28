@@ -9,6 +9,7 @@ const clientModules = path.join(rootDir, 'client', 'node_modules');
 const reactDir = path.join(clientModules, 'react');
 const reactDomDir = path.join(clientModules, 'react-dom');
 const testingLibraryDir = path.join(clientModules, '@testing-library');
+const axiosDir = path.join(clientModules, 'axios');
 
 export default defineConfig({
   plugins: [react()],
@@ -36,6 +37,7 @@ export default defineConfig({
         find: /^@testing-library\/jest-dom\/vitest$/,
         replacement: path.join(testingLibraryDir, 'jest-dom', 'dist', 'vitest.mjs'),
       },
+      { find: /^axios$/, replacement: path.join(axiosDir, 'index.js') },
     ],
   },
   test: {

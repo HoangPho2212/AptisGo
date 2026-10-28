@@ -1,17 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import App from '../client/src/App.jsx';
 import { clearSession, readSession, saveSession } from '../client/src/auth/authStorage.js';
-
-function jsonResponse(status, body) {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: async () => body,
-  };
-}
+import { getApiRequests, installApiAdapter, resetApiAdapter } from './auth-test-utils.jsx';
 
 function studentSession(overrides = {}) {
   return {
@@ -38,7 +31,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  vi.unstubAllGlobals();
+  resetApiAdapter();
 });
 
 describe('login portal', () => {
@@ -54,8 +47,7 @@ describe('login portal', () => {
   });
 
   it('blocks invalid email and empty password before calling the API', async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
+    installApiAdapter(() => ({ status: 200, data: studentSession() }));
     const user = userEvent.setup();
     renderAt('/login');
 
@@ -64,12 +56,11 @@ describe('login portal', () => {
 
     expect(await screen.findByText(/Use your Greenwich email/i)).toBeInTheDocument();
     expect(screen.getByText(/Password is required/i)).toBeInTheDocument();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(getApiRequests()).toHaveLength(0);
   });
 
   it('logs in, checks the selected role, and saves the session', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, studentSession()));
-    vi.stubGlobal('fetch', fetchMock);
+    installApiAdapter(() => ({ status: 200, data: studentSession() }));
     const user = userEvent.setup();
     renderAt('/login');
 
@@ -77,14 +68,12 @@ describe('login portal', () => {
     await user.type(screen.getByLabelText(/^password$/i), 'Placement2026!');
     await user.click(screen.getByRole('button', { name: /sign in securely/i }));
 
-    await screen.findByRole('heading', { name: /signed in successfully/i });
+    await screen.findByRole('heading', { name: /student workspace/i });
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/auth/login',
-      expect.objectContaining({ method: 'POST' })
-    );
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+    const requests = getApiRequests();
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ url: '/api/auth/login', method: 'post' });
+    expect(JSON.parse(requests[0].data)).toEqual({
       email: 'amina@greenwich.edu.vn',
       password: 'Placement2026!',
     });
@@ -96,8 +85,7 @@ describe('login portal', () => {
   });
 
   it('rejects a login role that does not match the account and saves nothing', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, studentSession()));
-    vi.stubGlobal('fetch', fetchMock);
+    installApiAdapter(() => ({ status: 200, data: studentSession() }));
     const user = userEvent.setup();
     renderAt('/login');
 
@@ -112,10 +100,10 @@ describe('login portal', () => {
   });
 
   it('shows the API login error without saving a session', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(jsonResponse(401, { error: 'Invalid email or password' }));
-    vi.stubGlobal('fetch', fetchMock);
+    installApiAdapter(() => ({
+      status: 401,
+      data: { error: 'Invalid email or password' },
+    }));
     const user = userEvent.setup();
     renderAt('/login');
 
@@ -154,8 +142,7 @@ describe('registration portal', () => {
   });
 
   it('requires the institutional domain and GDPR consent before calling the API', async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
+    installApiAdapter(() => ({ status: 201, data: studentSession() }));
     const user = userEvent.setup();
     renderAt('/register');
 
@@ -167,12 +154,11 @@ describe('registration portal', () => {
 
     expect(await screen.findByText(/Use your Greenwich email/i)).toBeInTheDocument();
     expect(screen.getByText(/You must consent to the privacy notice/i)).toBeInTheDocument();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(getApiRequests()).toHaveLength(0);
   });
 
   it('registers a student, sends only the API fields, and saves the session', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(201, studentSession()));
-    vi.stubGlobal('fetch', fetchMock);
+    installApiAdapter(() => ({ status: 201, data: studentSession() }));
     const user = userEvent.setup();
     renderAt('/register');
 
@@ -184,14 +170,12 @@ describe('registration portal', () => {
     await user.click(screen.getByRole('checkbox', { name: /I consent to the processing/i }));
     await user.click(screen.getByRole('button', { name: /create student account/i }));
 
-    await screen.findByRole('heading', { name: /signed in successfully/i });
+    await screen.findByRole('heading', { name: /student workspace/i });
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/auth/register',
-      expect.objectContaining({ method: 'POST' })
-    );
-    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const requests = getApiRequests();
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ url: '/api/auth/register', method: 'post' });
+    const requestBody = JSON.parse(requests[0].data);
     expect(requestBody).toEqual({
       name: 'Amina Rahman',
       email: 'amina@greenwich.edu.vn',
@@ -213,12 +197,12 @@ describe('session gate', () => {
     ).toBeInTheDocument();
   });
 
-  it('renders the signed-in session and signs out cleanly', async () => {
+  it('renders the signed-in workspace and signs out cleanly', async () => {
     saveSession(studentSession());
     const user = userEvent.setup();
     renderAt('/');
 
-    expect(screen.getByRole('heading', { name: /signed in successfully/i })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /student workspace/i })).toBeInTheDocument();
     expect(screen.getByText('Amina Rahman')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /sign out/i }));
