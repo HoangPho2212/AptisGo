@@ -8,15 +8,17 @@ APTIS GO combines instant auto-marking for receptive skills with lecturer rubric
 review for productive skills, then resolves a CEFR profile using the official
 Aptis 0–200 scale and the Core module as a borderline modifier.
 
-> **Status: Sprint 2 — AG-105 hardening complete.**
+> **Status: Sprint 2 - AG-106 authentication portal complete.**
 > The repository now contains two decoupled applications: `client/` (React 19 +
 > Vite 8 + TailwindCSS 4) and `server/` (Node.js + Express 5), gated by ESLint 10
 > and Prettier 3. The API connects to MongoDB Atlas through a pooled Mongoose
 > connection, ships the `User` model, issues stateless HS256 JWTs from
 > `POST /api/auth/register` and `POST /api/auth/login`, exposes `verifyToken`
 > plus role guards, sanitizes MongoDB operator keys, and centralizes error
-> responses. Protected domain routes, the remaining models, and the domain UI
-> arrive next.
+> responses. The public authentication portal now serves `/login` and
+> `/register` with role-aware sign-in, Greenwich institutional-email
+> validation, and a mandatory GDPR consent gate. Protected domain routes, the
+> remaining models, and the domain workspace arrive next.
 
 ---
 
@@ -182,14 +184,14 @@ Unknown 5xx details are logged server-side and never returned to the client.
 
 **Implemented so far:**
 
-- **Frontend (`client/`):** React 19.3, Vite 8.3, TailwindCSS 4.3 (CSS-first),
+- **Frontend (`client/`):** React 19.3, React Router 7, Vite 8.3, TailwindCSS 4.3 (CSS-first),
   ESLint 10 flat config, Prettier 3.
 - **Backend (`server/`):** Node.js ≥ 20.19, Express 5.3, Helmet, CORS, dotenv,
   jsonwebtoken 9 (HS256), bcryptjs cost 12, express-mongo-sanitize 2.2, ESLint
   10, Prettier 3.
 - **Database:** MongoDB Atlas via Mongoose 9 with an explicit connection pool
   (max 10 / min 2, 5 s server selection, 30 s idle recycling).
-- **Tests:** Node.js built-in `node:test` — no test-framework dependency.
+- **Tests:** Node.js built-in `node:test` for the API, plus Vitest 5, jsdom 29, and Testing Library for the React portal.
 
 **Planned (see the SAD and ADS documents):**
 
@@ -201,7 +203,7 @@ Unknown 5xx details are logged server-side and never returned to the client.
 ```text
 .
 ├── client/                          # React SPA (ESM)
-│   ├── src/App.jsx                  # Health-check landing view
+│   ├── src/App.jsx                  # Router: /login, /register, session gate
 │   ├── src/index.css                # TailwindCSS entry (@import + @theme)
 │   ├── eslint.config.js             # Browser globals + React hooks rules
 │   ├── vite.config.js               # React + Tailwind plugins, /api proxy
@@ -255,6 +257,21 @@ Unknown 5xx details are logged server-side and never returned to the client.
 ├── package.json                     # Root command delegation
 └── README.md
 ```
+
+Frontend test files:
+
+- `tests/auth-validation.test.jsx` — validation Contract
+- `tests/auth-portal.test.jsx` — route, role, API, session, and consent behaviour
+- `tests/setup.js` — Testing Library cleanup and matchers
+- `vitest.config.mjs` — jsdom, React dedupe, and `tests/**/*.test.jsx` discovery
+
+Auth portal modules:
+
+- `client/src/auth/authValidation.js` — institutional domain, password, student ID, and consent rules
+- `client/src/auth/api.js` — `/api/auth` fetch wrapper and `ApiError`
+- `client/src/auth/authStorage.js` — tab-scoped session persistence
+- `client/src/auth/AuthLayout.jsx`, `RoleSelector.jsx`, `FormField.jsx`, `PasswordField.jsx`, `ConsentField.jsx`, `AuthAlert.jsx`
+- `client/src/pages/LoginPage.jsx`, `RegisterPage.jsx`, `SessionPage.jsx`
 
 ## Getting started
 
@@ -315,14 +332,17 @@ npm run dev:server
 npm run dev:client
 ```
 
-The Vite dev server proxies `/api` to `http://localhost:5000`, so the landing
-page reports the live API status. The client reads `VITE_API_URL` only when you
-need to bypass the proxy.
+The Vite dev server proxies `/api` to `http://localhost:5000`. Open
+`http://localhost:5173/login` or `http://localhost:5173/register` to use the
+authentication portal. The client reads `VITE_API_URL` only when you need to
+bypass the proxy. `VITE_INSTITUTIONAL_EMAIL_DOMAINS` controls the accepted
+institutional domains and defaults to `greenwich.edu.vn`.
 
 ### Quality gates
 
 ```bash
-npm test                        # unit, Contract, and scaffold tests
+npm test                        # API unit, Contract, and scaffold tests
+npm run test:ui                 # React auth-portal tests (Vitest + jsdom)
 npm run lint                    # root, client, and server ESLint
 npm run format:check            # Prettier verification
 npm --prefix client run build   # production SPA build to client/dist
@@ -337,7 +357,17 @@ Expected test result (both integration tests are skipped without a database):
 ℹ skipped 2
 ```
 
-Run the real-database check against Atlas or a local MongoDB:
+Expected UI result:
+
+```text
+ℹ tests 26
+ℹ pass 26
+ℹ fail 0
+```
+
+With `MONGODB_TEST_URI` set (local MongoDB or Atlas), the same command reports
+**85 passed, 0 failed, 0 skipped**. Run the real-database check against Atlas or
+a local MongoDB:
 
 ```bash
 # bash
@@ -378,6 +408,8 @@ built with Vite for production.
 | RBAC middleware  | `node --test "tests/*.test.js"`                                              | Bearer parsing, invalid/expired tokens, role allow/deny, 401/403 Contracts, config errors                                |
 | NoSQL sanitizer  | `node --test "tests/*.test.js"`                                              | Operator/dotted-key rewriting, nested body data, Express 5 compatibility, ordinary requests                              |
 | Error handler    | `node --test "tests/*.test.js"`                                              | JSON parse, payload limit, validation, cast, duplicate key, generic 500, headersSent, 404 Contract                       |
+| Auth validation  | `npm run test:ui`                                                            | Institutional domain, password/student-ID bounds, role and consent rules                                                 |
+| Auth portal      | `npm run test:ui`                                                            | `/login`, `/register`, role mismatch, API calls, session save, redirects, sign out                                       |
 | Auth round-trip  | `MONGODB_TEST_URI=... node --test tests/auth.integration.test.js`            | Register 201, role forcing, bcrypt, duplicate 409, login 200/401, token claims                                           |
 | Mongo round-trip | `MONGODB_TEST_URI=... node --test tests/user-repository.integration.test.js` | Real MongoDB save, bcrypt hash, `UNTESTED` default, duplicate-email rejection                                            |
 
@@ -441,6 +473,7 @@ gitGraph
 | `design-log/#0004-auth-controller-jwt.md`              | AG-103 register/login and JWT decisions          |
 | `design-log/#0005-rbac-middleware.md`                  | AG-104 verifyToken and role-guard decisions      |
 | `design-log/#0006-nosql-sanitization-error-handler.md` | AG-105 sanitization and error Contract           |
+| `design-log/#0007-authentication-portal.md`            | AG-106 auth portal, role, email, and consent     |
 
 ## Engineering rules
 
@@ -463,6 +496,7 @@ gitGraph
 - [x] AG-103 — Register/login with bcrypt and stateless JWT
 - [x] AG-104 — JWT verification and role-based access guards
 - [x] AG-105 — NoSQL sanitization and centralized error handling
+- [x] AG-106 — Authentication portal (`/login`, `/register`)
 - [ ] Sprint 2 — Express API and Mongoose models per ADS/DDS
 - [ ] Sprint 3 — Student SPA: placement, goals, study plan
 - [ ] Sprint 4 — Lecturer workspace and hybrid grading pipeline
