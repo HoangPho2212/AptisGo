@@ -1,4 +1,3 @@
-const DEFAULT_INSTITUTIONAL_DOMAINS = ['greenwich.edu.vn'];
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const STUDENT_ID_PATTERN = /^[A-Za-z0-9-]{4,20}$/;
 const MAX_EMAIL_LENGTH = 254;
@@ -26,43 +25,19 @@ export const ROLE_OPTIONS = Object.freeze([
   },
 ]);
 
-function parseDomains(value) {
-  if (typeof value !== 'string') {
-    return DEFAULT_INSTITUTIONAL_DOMAINS;
-  }
-
-  const domains = value
-    .split(',')
-    .map((domain) => domain.trim().toLowerCase().replace(/^@/, ''))
-    .filter(Boolean);
-
-  return domains.length > 0 ? domains : DEFAULT_INSTITUTIONAL_DOMAINS;
-}
-
-export const INSTITUTIONAL_EMAIL_DOMAINS = Object.freeze(
-  parseDomains(import.meta.env.VITE_INSTITUTIONAL_EMAIL_DOMAINS)
-);
-
 export function normalizeEmail(value) {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }
 
-export function validateInstitutionalEmail(value) {
+export function validateEmail(value) {
   const email = normalizeEmail(value);
 
   if (!email) {
-    return 'Institutional email is required';
+    return 'Email is required';
   }
 
   if (email.length > MAX_EMAIL_LENGTH || !EMAIL_PATTERN.test(email)) {
     return 'Enter a valid email address';
-  }
-
-  const atIndex = email.lastIndexOf('@');
-  const domain = email.slice(atIndex + 1);
-
-  if (!INSTITUTIONAL_EMAIL_DOMAINS.includes(domain)) {
-    return `Use your Greenwich email (@${INSTITUTIONAL_EMAIL_DOMAINS[0]})`;
   }
 
   return null;
@@ -112,7 +87,7 @@ export function validateStudentId(value) {
 
 export function validateLoginForm(viewState = {}) {
   const errors = {};
-  const emailError = validateInstitutionalEmail(viewState.email);
+  const emailError = validateEmail(viewState.email);
   const password = typeof viewState.password === 'string' ? viewState.password : '';
 
   if (emailError) {
@@ -133,7 +108,7 @@ export function validateLoginForm(viewState = {}) {
 export function validateRegisterForm(viewState = {}) {
   const errors = {};
   const nameError = validateName(viewState.name);
-  const emailError = validateInstitutionalEmail(viewState.email);
+  const emailError = validateEmail(viewState.email);
   const studentIdError = validateStudentId(viewState.studentId);
   const passwordError = validatePassword(viewState.password);
 

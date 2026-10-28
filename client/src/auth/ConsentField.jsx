@@ -33,10 +33,9 @@ export default function ConsentField({ checked, onChange, error }) {
           What we collect and why
         </summary>
         <p className="mt-2 leading-5">
-          We store your name, institutional email, student ID, practice responses, and assessment
-          results. Data is restricted to exam administration, diagnostic modelling, and rubric
-          evaluation. You can request access, correction, or deletion through the university privacy
-          process.
+          We store your name, email address, student ID, practice responses, and assessment results.
+          Data is restricted to exam administration, diagnostic modelling, and rubric evaluation.
+          You can request access, correction, or deletion through the university privacy process.
         </p>
       </details>
 

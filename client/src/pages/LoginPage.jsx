@@ -83,7 +83,7 @@ export default function LoginPage() {
     <AuthLayout
       eyebrow="Welcome back"
       title="Sign in to your workspace"
-      subtitle="Use your Greenwich institutional account. Your selected role is checked against the account record."
+      subtitle="Use your account email. Your selected role is checked against the account record."
       footer={
         <>
           New to APTIS GO?{' '}
@@ -107,15 +107,15 @@ export default function LoginPage() {
 
         <FormField
           id="login-email"
-          label="Institutional email"
+          label="Email address"
           type="email"
           autoComplete="email"
           inputMode="email"
-          placeholder="name@greenwich.edu.vn"
+          placeholder="name@fpt.edu.vn"
           value={viewState.email}
           onChange={updateField('email')}
           error={fieldErrors.email}
-          hint="Use your @greenwich.edu.vn address."
+          hint="Any valid email is accepted, e.g. name@fpt.edu.vn."
           required
         />
 

@@ -16,8 +16,8 @@ Aptis 0–200 scale and the Core module as a borderline modifier.
 > `POST /api/auth/register` and `POST /api/auth/login`, exposes `verifyToken`
 > plus role guards, sanitizes MongoDB operator keys, and centralizes error
 > responses. The public authentication portal now serves `/login` and
-> `/register` with role-aware sign-in, Greenwich institutional-email
-> validation, and a mandatory GDPR consent gate. A React `AuthContext` restores
+> `/register` with role-aware sign-in, any-email validation with an optional
+> `@fpt.edu.vn` suggestion, and a mandatory GDPR consent gate. A React `AuthContext` restores
 > the tab session, Axios attaches the JWT to API requests, and role-specific
 > `/student`, `/lecturer`, and `/admin` workspaces are protected by
 > `ProtectedRoute`. Jest controller tests and a runnable Postman collection now
@@ -267,7 +267,8 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── #0006-nosql-sanitization-error-handler.md
 │   ├── #0007-authentication-portal.md
 │   ├── #0008-auth-context-axios-protected-routes.md
-│   └── #0009-jest-postman-auth-tests.md
+│   ├── #0009-jest-postman-auth-tests.md
+│   └── #0010-accept-any-valid-email.md
 ├── diagrams/                        # Exported architecture diagrams (PNG)
 ├── docx/                            # SRS, SAD, DDS, ADS, CSG, BRD, STP
 ├── postman/
@@ -317,7 +318,7 @@ QA test files:
 
 Auth portal modules:
 
-- `client/src/auth/authValidation.js` — institutional domain, password, student ID, and consent rules
+- `client/src/auth/authValidation.js` — email, password, student ID, and consent rules
 - `client/src/auth/apiClient.js` — Axios instance, Bearer request interceptor, 401 handling
 - `client/src/auth/api.js` — `/api/auth` request wrappers and `ApiError` re-export
 - `client/src/auth/AuthProvider.jsx` — session context, login/register/logout
@@ -389,8 +390,8 @@ The Vite dev server proxies `/api` to `http://localhost:5000`. Open
 `http://localhost:5173/login` or `http://localhost:5173/register` to use the
 authentication portal; signed-in users are redirected to `/student`,
 `/lecturer`, or `/admin`. The client reads `VITE_API_URL` only when you need to
-bypass the proxy. `VITE_INSTITUTIONAL_EMAIL_DOMAINS` controls the accepted
-institutional domains and defaults to `greenwich.edu.vn`.
+bypass the proxy. Any valid email address is accepted; the forms suggest
+`name@fpt.edu.vn` but do not require that domain.
 
 ### Quality gates
 
@@ -415,8 +416,8 @@ Expected test result (both integration tests are skipped without a database):
 Expected UI result:
 
 ```text
-ℹ tests 44
-ℹ pass 44
+ℹ tests 42
+ℹ pass 42
 ℹ fail 0
 ```
 
@@ -492,7 +493,7 @@ built with Vite for production.
 | RBAC middleware       | `node --test "tests/*.test.js"`                                              | Bearer parsing, invalid/expired tokens, role allow/deny, 401/403 Contracts, config errors                                |
 | NoSQL sanitizer       | `node --test "tests/*.test.js"`                                              | Operator/dotted-key rewriting, nested body data, Express 5 compatibility, ordinary requests                              |
 | Error handler         | `node --test "tests/*.test.js"`                                              | JSON parse, payload limit, validation, cast, duplicate key, generic 500, headersSent, 404 Contract                       |
-| Auth validation       | `npm run test:ui`                                                            | Institutional domain, password/student-ID bounds, role and consent rules                                                 |
+| Auth validation       | `npm run test:ui`                                                            | Any-email acceptance, password/student-ID bounds, role and consent rules                                                 |
 | Auth portal           | `npm run test:ui`                                                            | `/login`, `/register`, role mismatch, API calls, session save, redirects, sign out                                       |
 | Axios client          | `npm run test:ui`                                                            | Bearer request header, 401 session clearing, server/network `ApiError` normalization                                     |
 | Auth context          | `npm run test:ui`                                                            | Session restore, login/register, logout, role mismatch, 401 state reset                                                  |
@@ -565,6 +566,7 @@ gitGraph
 | `design-log/#0007-authentication-portal.md`               | AG-106 auth portal, role, email, and consent     |
 | `design-log/#0008-auth-context-axios-protected-routes.md` | AG-107 AuthContext, Axios JWT, and route guards  |
 | `design-log/#0009-jest-postman-auth-tests.md`             | AG-108 Jest and Postman TC01–TC03 evidence       |
+| `design-log/#0010-accept-any-valid-email.md`              | Any-email validation with optional `@fpt.edu.vn` |
 
 ## Engineering rules
 
