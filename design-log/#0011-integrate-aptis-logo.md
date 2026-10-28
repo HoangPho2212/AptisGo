@@ -197,3 +197,95 @@ Implemented on `chore/update-aptis-logo` (not an `AP-*` ticket branch).
   copied, so `client/public/` is the single canonical asset location.
 - The build output is generated under `client/dist/` and is not part of this
   change.
+
+## 9. Follow-up: Remove Logo Backgrounds
+
+### Background
+
+Both supplied SVGs included a full-canvas navy rectangle behind the artwork:
+
+```svg
+<rect width="512" height="512" rx="112" fill="#06111F" />
+<rect width="760" height="220" rx="16" fill="#06111F" />
+```
+
+The app background is already `#06111f`, so the rectangle was invisible on the
+auth shell. It still creates a dark tile wherever the asset is placed on a
+different surface, and the favicon inherits a filled square background.
+
+### Problem
+
+The artwork should be transparent so the symbol and wordmark can sit on any
+background without a baked-in tile.
+
+### Design
+
+- Remove the full-canvas `<rect>` from both files:
+  - `client/public/aptis-logo.svg`
+  - `client/public/aptis-logo-full.svg`
+- Keep the viewBox, symbol paths, wordmark, colours, and dimensions unchanged.
+- Keep the app’s dark background; transparency is an asset property, not a
+  layout change.
+- Add a Node test that rejects any full-canvas rectangle in either SVG.
+
+### TDD plan
+
+1. Add `tests/aptis-logo.test.js` that reads both SVGs and asserts no rectangle
+   spans the full viewBox.
+2. Run `npm test` and confirm it fails against the current assets.
+3. Remove the background rectangles.
+4. Re-run the tests, lint, format check, and build.
+
+### Examples
+
+#### ✅ Transparent symbol
+
+```svg
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <g fill="#35E6D0">...</g>
+</svg>
+```
+
+The symbol can be placed on the dark shell, a light card, or a transparent
+favicon surface.
+
+#### ❌ Full-canvas background rectangle
+
+```svg
+<rect width="512" height="512" rx="112" fill="#06111F" />
+```
+
+The rectangle creates a dark tile when the asset is used outside the navy
+shell.
+
+### Trade-offs
+
+- On a light surface, the white `APTIS` wordmark in the horizontal lockup will
+  have poor contrast. The current shell is dark, so this is acceptable; a
+  future light theme would need a dark-on-light variant.
+- The favicon becomes a transparent turquoise symbol rather than a filled app
+  tile. That matches the request but may look lighter in some browser chrome.
+
+### Implementation Results
+
+Implemented on `chore/remove-logo-backgrounds`.
+
+- Removed the full-canvas `<rect>` from both `client/public/aptis-logo.svg` and
+  `client/public/aptis-logo-full.svg`.
+- Kept the viewBox, symbol paths, wordmark, colours, and dimensions unchanged.
+- Added `tests/aptis-logo.test.js`; it failed against the old assets and passes
+  after the rectangles were removed.
+
+Verification:
+
+- `node --test tests/aptis-logo.test.js` — **2/2 passed**
+- `MONGODB_TEST_URI="mongodb://127.0.0.1:27017/aptis-go-test"; npm test` —
+  **87/87 passed**
+- `npm run test:ui` — **43/43 passed**
+- `npm run test:jest` — **7/7 passed**
+- `npm run lint` — clean
+- `npm run format:check` — clean
+- `npm --prefix client run build` — successful
+
+The only visual change is the transparent asset background; the auth shell
+still supplies its own `#06111f` page background.
