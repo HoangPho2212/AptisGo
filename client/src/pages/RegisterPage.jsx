@@ -86,7 +86,7 @@ export default function RegisterPage() {
     <AuthLayout
       eyebrow="Student enrollment"
       title="Create your student account"
-      subtitle="Register with your Greenwich institutional email. Lecturer and administrator accounts are provisioned by the university."
+      subtitle="Register with any valid email. Lecturer and administrator accounts are provisioned by the university."
       footer={
         <>
           Already have an account?{' '}
@@ -136,15 +136,15 @@ export default function RegisterPage() {
 
         <FormField
           id="register-email"
-          label="Institutional email"
+          label="Email address"
           type="email"
           autoComplete="email"
           inputMode="email"
-          placeholder="name@greenwich.edu.vn"
+          placeholder="name@fpt.edu.vn"
           value={viewState.email}
           onChange={updateField('email')}
           error={fieldErrors.email}
-          hint="Use your @greenwich.edu.vn address."
+          hint="Any valid email is accepted, e.g. name@fpt.edu.vn."
           required
         />
 

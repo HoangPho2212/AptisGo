@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  INSTITUTIONAL_EMAIL_DOMAINS,
   normalizeEmail,
-  validateInstitutionalEmail,
+  validateEmail,
   validateLoginForm,
   validateName,
   validatePassword,
@@ -11,29 +10,20 @@ import {
   validateStudentId,
 } from '../client/src/auth/authValidation.js';
 
-describe('institutional email Contract', () => {
-  it('exposes the Greenwich domain by default', () => {
-    expect(INSTITUTIONAL_EMAIL_DOMAINS).toContain('greenwich.edu.vn');
-  });
-
-  it('accepts the institutional domain case-insensitively', () => {
-    expect(validateInstitutionalEmail('Amina.Rahman@GREENWICH.EDU.VN')).toBeNull();
+describe('email Contract', () => {
+  it('accepts any valid email address regardless of domain', () => {
+    expect(validateEmail('Amina.Rahman@GREENWICH.EDU.VN')).toBeNull();
+    expect(validateEmail('amina@gmail.com')).toBeNull();
+    expect(validateEmail('amina@fpt.edu.vn')).toBeNull();
+    expect(validateEmail('student@university.edu')).toBeNull();
     expect(normalizeEmail('  Amina.Rahman@GREENWICH.EDU.VN  ')).toBe(
       'amina.rahman@greenwich.edu.vn'
     );
   });
 
-  it('rejects personal and lookalike domains', () => {
-    expect(validateInstitutionalEmail('amina@gmail.com')).toMatch(/Greenwich email/i);
-    expect(validateInstitutionalEmail('amina@evilgreenwich.edu.vn')).toMatch(/Greenwich email/i);
-    expect(validateInstitutionalEmail('amina@greenwich.edu.vn.evil.com')).toMatch(
-      /Greenwich email/i
-    );
-  });
-
   it('rejects malformed and empty addresses', () => {
-    expect(validateInstitutionalEmail('')).toMatch(/required/i);
-    expect(validateInstitutionalEmail('not-an-email')).toMatch(/valid email/i);
+    expect(validateEmail('')).toMatch(/required/i);
+    expect(validateEmail('not-an-email')).toMatch(/valid email/i);
   });
 });
 
@@ -69,7 +59,7 @@ describe('login ViewState Contract', () => {
   it('accepts a valid student login', () => {
     expect(
       validateLoginForm({
-        email: 'amina@greenwich.edu.vn',
+        email: 'amina@fpt.edu.vn',
         password: 'Placement2026!',
         role: 'student',
       })
@@ -81,7 +71,7 @@ describe('registration ViewState Contract', () => {
   const validRegistration = {
     name: 'Amina Rahman',
     studentId: 'GCS210884',
-    email: 'amina@greenwich.edu.vn',
+    email: 'amina@fpt.edu.vn',
     password: 'Placement2026!',
     confirmPassword: 'Placement2026!',
     gdprConsent: true,
@@ -102,12 +92,12 @@ describe('registration ViewState Contract', () => {
     expect(errors.gdprConsent).toMatch(/consent/i);
   });
 
-  it('rejects a personal email at registration', () => {
-    const errors = validateRegisterForm({
-      ...validRegistration,
-      email: 'amina@gmail.com',
-    });
-
-    expect(errors.email).toMatch(/Greenwich email/i);
+  it('accepts any valid email at registration', () => {
+    expect(
+      validateRegisterForm({
+        ...validRegistration,
+        email: 'amina@gmail.com',
+      })
+    ).toEqual({});
   });
 });

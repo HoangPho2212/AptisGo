@@ -54,7 +54,7 @@ describe('ProtectedRoute', () => {
     renderAt('/student');
 
     await screen.findByRole('heading', { name: /sign in to your workspace/i });
-    await user.type(screen.getByLabelText(/institutional email/i), 'student@greenwich.edu.vn');
+    await user.type(screen.getByLabelText(/email address/i), 'student@greenwich.edu.vn');
     await user.type(screen.getByLabelText(/^password$/i), 'Placement2026!');
     await user.click(screen.getByRole('button', { name: /sign in securely/i }));
 

@@ -13,7 +13,7 @@ function studentSession(overrides = {}) {
     user: {
       id: 'user-1',
       name: 'Amina Rahman',
-      email: 'amina@greenwich.edu.vn',
+      email: 'amina@gmail.com',
       role: 'student',
       ...overrides,
     },
@@ -35,15 +35,15 @@ afterEach(() => {
 });
 
 describe('login portal', () => {
-  it('renders the role selector and institutional email guidance', () => {
+  it('renders the role selector and email guidance', () => {
     renderAt('/login');
 
     expect(screen.getByRole('heading', { name: /sign in to your workspace/i })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: /student/i })).toBeChecked();
     expect(screen.getByRole('radio', { name: /lecturer/i })).toBeEnabled();
     expect(screen.getByRole('radio', { name: /administrator/i })).toBeEnabled();
-    expect(screen.getByLabelText(/institutional email/i)).toBeInTheDocument();
-    expect(screen.getByText(/@greenwich\.edu\.vn/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/email address/i)).toBeInTheDocument();
+    expect(screen.getByText(/@fpt\.edu\.vn/i)).toBeInTheDocument();
   });
 
   it('blocks invalid email and empty password before calling the API', async () => {
@@ -51,10 +51,10 @@ describe('login portal', () => {
     const user = userEvent.setup();
     renderAt('/login');
 
-    await user.type(screen.getByLabelText(/institutional email/i), 'amina@gmail.com');
+    await user.type(screen.getByLabelText(/email address/i), 'not-an-email');
     await user.click(screen.getByRole('button', { name: /sign in securely/i }));
 
-    expect(await screen.findByText(/Use your Greenwich email/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Enter a valid email address/i)).toBeInTheDocument();
     expect(screen.getByText(/Password is required/i)).toBeInTheDocument();
     expect(getApiRequests()).toHaveLength(0);
   });
@@ -64,7 +64,7 @@ describe('login portal', () => {
     const user = userEvent.setup();
     renderAt('/login');
 
-    await user.type(screen.getByLabelText(/institutional email/i), 'amina@greenwich.edu.vn');
+    await user.type(screen.getByLabelText(/email address/i), 'amina@gmail.com');
     await user.type(screen.getByLabelText(/^password$/i), 'Placement2026!');
     await user.click(screen.getByRole('button', { name: /sign in securely/i }));
 
@@ -74,7 +74,7 @@ describe('login portal', () => {
     expect(requests).toHaveLength(1);
     expect(requests[0]).toMatchObject({ url: '/api/auth/login', method: 'post' });
     expect(JSON.parse(requests[0].data)).toEqual({
-      email: 'amina@greenwich.edu.vn',
+      email: 'amina@gmail.com',
       password: 'Placement2026!',
     });
     expect(readSession()).toMatchObject({
@@ -90,7 +90,7 @@ describe('login portal', () => {
     renderAt('/login');
 
     await user.click(screen.getByRole('radio', { name: /lecturer/i }));
-    await user.type(screen.getByLabelText(/institutional email/i), 'amina@greenwich.edu.vn');
+    await user.type(screen.getByLabelText(/email address/i), 'amina@gmail.com');
     await user.type(screen.getByLabelText(/^password$/i), 'Placement2026!');
     await user.click(screen.getByRole('button', { name: /sign in securely/i }));
 
@@ -107,7 +107,7 @@ describe('login portal', () => {
     const user = userEvent.setup();
     renderAt('/login');
 
-    await user.type(screen.getByLabelText(/institutional email/i), 'amina@greenwich.edu.vn');
+    await user.type(screen.getByLabelText(/email address/i), 'amina@gmail.com');
     await user.type(screen.getByLabelText(/^password$/i), 'WrongPassword1!');
     await user.click(screen.getByRole('button', { name: /sign in securely/i }));
 
@@ -141,19 +141,19 @@ describe('registration portal', () => {
     expect(screen.getByRole('radio', { name: /administrator/i })).toBeDisabled();
   });
 
-  it('requires the institutional domain and GDPR consent before calling the API', async () => {
+  it('accepts any valid email and requires GDPR consent before calling the API', async () => {
     installApiAdapter(() => ({ status: 201, data: studentSession() }));
     const user = userEvent.setup();
     renderAt('/register');
 
     await user.type(screen.getByLabelText(/full name/i), 'Amina Rahman');
-    await user.type(screen.getByLabelText(/institutional email/i), 'amina@gmail.com');
+    await user.type(screen.getByLabelText(/email address/i), 'amina@gmail.com');
     await user.type(screen.getByLabelText(/^password$/i), 'Placement2026!');
     await user.type(screen.getByLabelText(/confirm password/i), 'Placement2026!');
     await user.click(screen.getByRole('button', { name: /create student account/i }));
 
-    expect(await screen.findByText(/Use your Greenwich email/i)).toBeInTheDocument();
-    expect(screen.getByText(/You must consent to the privacy notice/i)).toBeInTheDocument();
+    expect(await screen.findByText(/You must consent to the privacy notice/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Enter a valid email address/i)).not.toBeInTheDocument();
     expect(getApiRequests()).toHaveLength(0);
   });
 
@@ -164,7 +164,7 @@ describe('registration portal', () => {
 
     await user.type(screen.getByLabelText(/full name/i), 'Amina Rahman');
     await user.type(screen.getByLabelText(/student id/i), 'GCS210884');
-    await user.type(screen.getByLabelText(/institutional email/i), 'amina@greenwich.edu.vn');
+    await user.type(screen.getByLabelText(/email address/i), 'amina@gmail.com');
     await user.type(screen.getByLabelText(/^password$/i), 'Placement2026!');
     await user.type(screen.getByLabelText(/confirm password/i), 'Placement2026!');
     await user.click(screen.getByRole('checkbox', { name: /I consent to the processing/i }));
@@ -178,7 +178,7 @@ describe('registration portal', () => {
     const requestBody = JSON.parse(requests[0].data);
     expect(requestBody).toEqual({
       name: 'Amina Rahman',
-      email: 'amina@greenwich.edu.vn',
+      email: 'amina@gmail.com',
       password: 'Placement2026!',
       studentId: 'GCS210884',
     });
