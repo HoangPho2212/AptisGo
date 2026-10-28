@@ -1,33 +1,8 @@
-function BrandMark() {
-  return (
-    <span className="flex size-10 items-center justify-center rounded-xl bg-teal-400/15 text-teal-300 ring-1 ring-teal-400/30">
-      <svg
-        width="22"
-        height="22"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-      >
-        <path d="M12 2 2 7l10 5 10-5-10-5Z" />
-        <path d="m2 17 10 5 10-5" />
-        <path d="m2 12 10 5 10-5" />
-      </svg>
-    </span>
-  );
-}
-
 function Brand() {
   return (
-    <div className="flex items-center gap-3">
-      <BrandMark />
-      <div>
-        <p className="text-sm font-bold tracking-[0.18em] text-white uppercase">Aptis Go</p>
-        <p className="text-xs text-slate-400">Greenwich English preparation</p>
-      </div>
+    <div className="flex flex-col gap-1">
+      <img src="/aptis-logo-full.svg" alt="APTIS GO" className="h-10 w-auto" />
+      <p className="text-xs text-slate-400">Greenwich English preparation</p>
     </div>
   );
 }

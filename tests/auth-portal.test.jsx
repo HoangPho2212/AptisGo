@@ -46,6 +46,14 @@ describe('login portal', () => {
     expect(screen.getByText(/@fpt\.edu\.vn/i)).toBeInTheDocument();
   });
 
+  it('renders the supplied Aptis logo lockup', () => {
+    renderAt('/login');
+
+    const logos = screen.getAllByRole('img', { name: /aptis go/i });
+    expect(logos.length).toBeGreaterThan(0);
+    expect(logos[0]).toHaveAttribute('src', '/aptis-logo-full.svg');
+  });
+
   it('blocks invalid email and empty password before calling the API', async () => {
     installApiAdapter(() => ({ status: 200, data: studentSession() }));
     const user = userEvent.setup();

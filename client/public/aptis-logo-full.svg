@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 220" width="100%" height="100%">
+  <!-- Background: Midnight Navy -->
+  <rect width="760" height="220" rx="16" fill="#06111F" />
+
+  <!-- Abstract Mark: Vector Threshold (Electric Turquoise) -->
+  <g id="symbol" fill="#35E6D0">
+    <!-- Base Anchor / Kinetic Launch facet -->
+    <path d="M 70 160 L 115 160 L 155 80 L 110 80 Z" />
+    <!-- Accelerated Forward / Elevation facet -->
+    <path d="M 125 140 L 170 140 L 210 60 L 165 60 Z" />
+  </g>
+
+  <!-- Wordmark: Geometric Sans Typography -->
+  <!-- "APTIS" in Pure White (Medium-Bold, tracked) -->
+  <text x="260" y="128" fill="#FFFFFF" font-family="system-ui, -apple-system, BlinkMacSystemFont, &#39;Montserrat&#39;, &#39;Inter&#39;, &#39;Segoe UI&#39;, sans-serif" font-size="64" font-weight="600" letter-spacing="5">APTIS</text>
+
+  <!-- "GO" in Electric Turquoise (Heavy Bold) -->
+  <text x="560" y="128" fill="#35E6D0" font-family="system-ui, -apple-system, BlinkMacSystemFont, &#39;Montserrat&#39;, &#39;Inter&#39;, &#39;Segoe UI&#39;, sans-serif" font-size="64" font-weight="900" letter-spacing="2">GO</text>
+</svg>
