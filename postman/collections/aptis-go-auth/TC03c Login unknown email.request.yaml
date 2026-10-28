@@ -1,0 +1,30 @@
+$kind: http-request
+name: TC03c Login unknown email (negative)
+method: POST
+url: '{{baseUrl}}/api/auth/login'
+order: 5000
+headers:
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "email": "missing-{{$timestamp}}@greenwich.edu.vn",
+      "password": "{{qaPassword}}"
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const body = pm.response.json();
+
+      pm.test('TC03c unknown email is rejected with 401', () => {
+        pm.response.to.have.status(401);
+        pm.expect(body.error).to.eql('Invalid email or password');
+      });
+
+      pm.test('TC03c does not reveal whether the account exists', () => {
+        pm.expect(body).to.not.have.property('token');
+        pm.expect(body.error).to.eql('Invalid email or password');
+      });

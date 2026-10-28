@@ -8,7 +8,7 @@ APTIS GO combines instant auto-marking for receptive skills with lecturer rubric
 review for productive skills, then resolves a CEFR profile using the official
 Aptis 0–200 scale and the Core module as a borderline modifier.
 
-> **Status: Sprint 2 - AG-107 auth context and protected routes complete.**
+> **Status: Sprint 2 - AG-108 auth QA suites complete.**
 > The repository now contains two decoupled applications: `client/` (React 19 +
 > Vite 8 + TailwindCSS 4) and `server/` (Node.js + Express 5), gated by ESLint 10
 > and Prettier 3. The API connects to MongoDB Atlas through a pooled Mongoose
@@ -20,7 +20,8 @@ Aptis 0–200 scale and the Core module as a borderline modifier.
 > validation, and a mandatory GDPR consent gate. A React `AuthContext` restores
 > the tab session, Axios attaches the JWT to API requests, and role-specific
 > `/student`, `/lecturer`, and `/admin` workspaces are protected by
-> `ProtectedRoute`. The remaining models and domain workspace arrive next.
+> `ProtectedRoute`. Jest controller tests and a runnable Postman collection now
+> cover TC01–TC03. The remaining models and domain workspace arrive next.
 
 ---
 
@@ -221,7 +222,9 @@ Unknown 5xx details are logged server-side and never returned to the client.
   10, Prettier 3.
 - **Database:** MongoDB Atlas via Mongoose 9 with an explicit connection pool
   (max 10 / min 2, 5 s server selection, 30 s idle recycling).
-- **Tests:** Node.js built-in `node:test` for the API, plus Vitest 5, jsdom 29, and Testing Library for the React portal.
+- **Tests:** Node.js built-in `node:test` for the API, Jest 30 for
+  controller/middleware unit tests, Vitest 5 + jsdom 29 + Testing Library for
+  the React portal, and Postman CLI for live auth-contract assertions.
 
 **Planned (see the SAD and ADS documents):**
 
@@ -263,9 +266,13 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── #0005-rbac-middleware.md
 │   ├── #0006-nosql-sanitization-error-handler.md
 │   ├── #0007-authentication-portal.md
-│   └── #0008-auth-context-axios-protected-routes.md
+│   ├── #0008-auth-context-axios-protected-routes.md
+│   └── #0009-jest-postman-auth-tests.md
 ├── diagrams/                        # Exported architecture diagrams (PNG)
 ├── docx/                            # SRS, SAD, DDS, ADS, CSG, BRD, STP
+├── postman/
+│   └── collections/
+│       └── aptis-go-auth/           # TC01-TC03 v3 collection and assertions
 ├── prototype/
 │   └── prototype.html               # Interactive clickable prototype
 ├── tests/
@@ -276,6 +283,8 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── auth.integration.test.js     # opt-in register/login round-trip
 │   ├── database.test.js             # Pool options + URI validation
 │   ├── error-handler.test.js        # centralized error Contract
+│   ├── jest/
+│   │   └── auth-controller.test.js  # TC01-TC03 controller/middleware units
 │   ├── jwt.test.js                  # claims, expiry, tamper rejection
 │   ├── mongo-sanitize.test.js       # NoSQL key sanitization + Express 5 adapter
 │   ├── password.test.js             # bcrypt hashing Contract
@@ -284,6 +293,7 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── user-model.test.js           # User schema, indexes, redaction
 │   └── user-repository.integration.test.js  # opt-in real MongoDB check
 ├── eslint.config.js                 # Root (Node) flat config
+├── jest.config.cjs                  # Jest node environment, tests/jest only
 ├── .prettierrc.json                 # Shared formatting
 ├── package.json                     # Root command delegation
 └── README.md
@@ -298,6 +308,12 @@ Frontend test files:
 - `tests/protected-route.test.jsx` — unauthenticated, wrong-role, and allowed-role routes
 - `tests/setup.js` — Testing Library cleanup and matchers
 - `vitest.config.mjs` — jsdom, React/Axios dedupe, and `tests/**/*.test.jsx` discovery
+
+QA test files:
+
+- `tests/jest/auth-controller.test.js` — TC01–TC03 controller and middleware units
+- `jest.config.cjs` — Jest node environment and `tests/jest/**/*.test.js` discovery
+- `postman/collections/aptis-go-auth/` — TC01–TC03 live API requests and assertions
 
 Auth portal modules:
 
@@ -381,6 +397,7 @@ institutional domains and defaults to `greenwich.edu.vn`.
 ```bash
 npm test                        # API unit, Contract, and scaffold tests
 npm run test:ui                 # React auth, Axios, and route-guard tests
+npm run test:jest               # TC01-TC03 Jest controller/middleware units
 npm run lint                    # root, client, and server ESLint
 npm run format:check            # Prettier verification
 npm --prefix client run build   # production SPA build to client/dist
@@ -403,7 +420,14 @@ Expected UI result:
 ℹ fail 0
 ```
 
-With `MONGODB_TEST_URI` set (local MongoDB or Atlas), the same command reports
+Expected Jest result:
+
+```text
+Test Suites: 1 passed, 1 total
+Tests:       7 passed, 7 total
+```
+
+With `MONGODB_TEST_URI` set (local MongoDB or Atlas), `npm test` reports
 **85 passed, 0 failed, 0 skipped**. Run the real-database check against Atlas or
 a local MongoDB:
 
@@ -417,6 +441,28 @@ $env:MONGODB_TEST_URI="mongodb://127.0.0.1:27017/aptis-go-test"; node --test tes
 
 > Quote the glob. On some shells `tests/*.test.js` is expanded before Node sees
 > it; passing the pattern to Node keeps the command portable.
+
+### Run the Postman auth collection
+
+Start the API against a test database, then run the Git-native collection:
+
+```bash
+# Terminal 1 (PowerShell example)
+$env:MONGODB_URI="mongodb://127.0.0.1:27017/aptis-go-qa"
+$env:JWT_SECRET="<at-least-32-characters>"
+$env:PORT="5000"
+npm run dev:server
+
+# Terminal 2
+postman collection lint postman/collections/aptis-go-auth
+postman collection run postman/collections/aptis-go-auth \
+  --env-var baseUrl=http://127.0.0.1:5000
+```
+
+The collection runs five requests and 11 assertions. It covers TC01
+registration, TC02 duplicate email, TC03 login, and the two login negatives.
+The STP's lecturer-workspace `403` is covered by the Jest `authorizeRoles`
+test until `/api/submissions/lecturer/pending` exists.
 
 ### Open the prototype
 
@@ -433,26 +479,28 @@ built with Vite for production.
 
 ## Testing
 
-| Suite            | Command                                                                      | Scope                                                                                                                    |
-| ---------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Contract         | `node --test "tests/*.test.js"`                                              | Core scaling, CEFR borderline elevation, question validation, writing word limits, speaking timers, listening play limit |
-| Scaffold         | `node --test "tests/*.test.js"`                                              | Client/server paths, manifest scripts and engines, flat ESLint configs, Prettier Contract                                |
-| Server health    | `node --test "tests/*.test.js"`                                              | `GET /api/health` response Contract, 404 Contract, hidden Express fingerprint                                            |
-| Database         | `node --test "tests/*.test.js"`                                              | Pool defaults and bounds, URI scheme rejection, safe disconnect                                                          |
-| User schema      | `node --test "tests/*.test.js"`                                              | Required fields, email normalization, enums, indexes, password hashing, JSON redaction                                   |
-| Auth validator   | `node --test "tests/*.test.js"`                                              | Register/login normalization, bounds, forced server fields                                                               |
-| JWT              | `node --test "tests/*.test.js"`                                              | Claims, expiry, tamper/wrong-secret rejection, secret strength                                                           |
-| Auth routes      | `node --test "tests/*.test.js"`                                              | 400 Contracts for register/login without a database                                                                      |
-| RBAC middleware  | `node --test "tests/*.test.js"`                                              | Bearer parsing, invalid/expired tokens, role allow/deny, 401/403 Contracts, config errors                                |
-| NoSQL sanitizer  | `node --test "tests/*.test.js"`                                              | Operator/dotted-key rewriting, nested body data, Express 5 compatibility, ordinary requests                              |
-| Error handler    | `node --test "tests/*.test.js"`                                              | JSON parse, payload limit, validation, cast, duplicate key, generic 500, headersSent, 404 Contract                       |
-| Auth validation  | `npm run test:ui`                                                            | Institutional domain, password/student-ID bounds, role and consent rules                                                 |
-| Auth portal      | `npm run test:ui`                                                            | `/login`, `/register`, role mismatch, API calls, session save, redirects, sign out                                       |
-| Axios client     | `npm run test:ui`                                                            | Bearer request header, 401 session clearing, server/network `ApiError` normalization                                     |
-| Auth context     | `npm run test:ui`                                                            | Session restore, login/register, logout, role mismatch, 401 state reset                                                  |
-| Protected routes | `npm run test:ui`                                                            | Unauthenticated redirect, wrong-role denial, allowed roles, role-home redirect, access-denied recovery                   |
-| Auth round-trip  | `MONGODB_TEST_URI=... node --test tests/auth.integration.test.js`            | Register 201, role forcing, bcrypt, duplicate 409, login 200/401, token claims                                           |
-| Mongo round-trip | `MONGODB_TEST_URI=... node --test tests/user-repository.integration.test.js` | Real MongoDB save, bcrypt hash, `UNTESTED` default, duplicate-email rejection                                            |
+| Suite                 | Command                                                                      | Scope                                                                                                                    |
+| --------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Contract              | `node --test "tests/*.test.js"`                                              | Core scaling, CEFR borderline elevation, question validation, writing word limits, speaking timers, listening play limit |
+| Scaffold              | `node --test "tests/*.test.js"`                                              | Client/server paths, manifest scripts and engines, flat ESLint configs, Prettier Contract                                |
+| Server health         | `node --test "tests/*.test.js"`                                              | `GET /api/health` response Contract, 404 Contract, hidden Express fingerprint                                            |
+| Database              | `node --test "tests/*.test.js"`                                              | Pool defaults and bounds, URI scheme rejection, safe disconnect                                                          |
+| User schema           | `node --test "tests/*.test.js"`                                              | Required fields, email normalization, enums, indexes, password hashing, JSON redaction                                   |
+| Auth validator        | `node --test "tests/*.test.js"`                                              | Register/login normalization, bounds, forced server fields                                                               |
+| JWT                   | `node --test "tests/*.test.js"`                                              | Claims, expiry, tamper/wrong-secret rejection, secret strength                                                           |
+| Auth routes           | `node --test "tests/*.test.js"`                                              | 400 Contracts for register/login without a database                                                                      |
+| RBAC middleware       | `node --test "tests/*.test.js"`                                              | Bearer parsing, invalid/expired tokens, role allow/deny, 401/403 Contracts, config errors                                |
+| NoSQL sanitizer       | `node --test "tests/*.test.js"`                                              | Operator/dotted-key rewriting, nested body data, Express 5 compatibility, ordinary requests                              |
+| Error handler         | `node --test "tests/*.test.js"`                                              | JSON parse, payload limit, validation, cast, duplicate key, generic 500, headersSent, 404 Contract                       |
+| Auth validation       | `npm run test:ui`                                                            | Institutional domain, password/student-ID bounds, role and consent rules                                                 |
+| Auth portal           | `npm run test:ui`                                                            | `/login`, `/register`, role mismatch, API calls, session save, redirects, sign out                                       |
+| Axios client          | `npm run test:ui`                                                            | Bearer request header, 401 session clearing, server/network `ApiError` normalization                                     |
+| Auth context          | `npm run test:ui`                                                            | Session restore, login/register, logout, role mismatch, 401 state reset                                                  |
+| Protected routes      | `npm run test:ui`                                                            | Unauthenticated redirect, wrong-role denial, allowed roles, role-home redirect, access-denied recovery                   |
+| Auth unit (TC01–TC03) | `npm run test:jest`                                                          | Register happy/validation/duplicate, login happy/negative, lecturer role guard                                           |
+| Auth API (TC01–TC03)  | `postman collection run postman/collections/aptis-go-auth`                   | Live registration, duplicate email, login, wrong password, unknown email; 11 assertions                                  |
+| Auth round-trip       | `MONGODB_TEST_URI=... node --test tests/auth.integration.test.js`            | Register 201, role forcing, bcrypt, duplicate 409, login 200/401, token claims                                           |
+| Mongo round-trip      | `MONGODB_TEST_URI=... node --test tests/user-repository.integration.test.js` | Real MongoDB save, bcrypt hash, `UNTESTED` default, duplicate-email rejection                                            |
 
 TDD is mandatory: write the failing test first, confirm the failure, implement,
 then re-run. Do not weaken a test to make a suite pass.
@@ -516,6 +564,7 @@ gitGraph
 | `design-log/#0006-nosql-sanitization-error-handler.md`    | AG-105 sanitization and error Contract           |
 | `design-log/#0007-authentication-portal.md`               | AG-106 auth portal, role, email, and consent     |
 | `design-log/#0008-auth-context-axios-protected-routes.md` | AG-107 AuthContext, Axios JWT, and route guards  |
+| `design-log/#0009-jest-postman-auth-tests.md`             | AG-108 Jest and Postman TC01–TC03 evidence       |
 
 ## Engineering rules
 
@@ -540,6 +589,7 @@ gitGraph
 - [x] AG-105 — NoSQL sanitization and centralized error handling
 - [x] AG-106 - Authentication portal (`/login`, `/register`)
 - [x] AG-107 - AuthContext, Axios JWT interceptors, and protected role routes
+- [x] AG-108 - Jest unit tests and Postman assertions for TC01–TC03
 - [ ] Sprint 2 — Express API and Mongoose models per ADS/DDS
 - [ ] Sprint 3 — Student SPA: placement, goals, study plan
 - [ ] Sprint 4 — Lecturer workspace and hybrid grading pipeline

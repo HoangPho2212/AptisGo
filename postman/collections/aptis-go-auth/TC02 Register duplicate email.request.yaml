@@ -1,0 +1,30 @@
+$kind: http-request
+name: TC02 Register duplicate email (negative)
+method: POST
+url: '{{baseUrl}}/api/auth/register'
+order: 2000
+headers:
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "name": "QA Duplicate",
+      "email": "{{qaEmail}}",
+      "password": "{{qaPassword}}"
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const body = pm.response.json();
+
+      pm.test('TC02 duplicate email is rejected with 409', () => {
+        pm.response.to.have.status(409);
+        pm.expect(body.error).to.eql('Email is already registered');
+      });
+
+      pm.test('TC02 does not return a token', () => {
+        pm.expect(body).to.not.have.property('token');
+      });

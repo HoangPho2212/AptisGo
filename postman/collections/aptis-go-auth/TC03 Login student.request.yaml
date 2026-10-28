@@ -1,0 +1,35 @@
+$kind: http-request
+name: TC03 Login student (happy)
+method: POST
+url: '{{baseUrl}}/api/auth/login'
+order: 3000
+headers:
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "email": "{{qaEmail}}",
+      "password": "{{qaPassword}}"
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const body = pm.response.json();
+
+      pm.test('TC03 status is 200 OK', () => {
+        pm.response.to.have.status(200);
+      });
+
+      pm.test('TC03 returns the registered student and a Bearer JWT', () => {
+        pm.expect(body.tokenType).to.eql('Bearer');
+        pm.expect(body.token).to.be.a('string');
+        pm.expect(body.token.split('.')).to.have.lengthOf(3);
+        pm.expect(body.user.email).to.eql(pm.collectionVariables.get('qaEmail'));
+        pm.expect(body.user.role).to.eql('student');
+        pm.expect(body.user).to.not.have.property('password');
+      });
+
+      pm.collectionVariables.set('studentToken', body.token);
