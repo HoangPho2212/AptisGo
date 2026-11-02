@@ -8,11 +8,12 @@ APTIS GO combines instant auto-marking for receptive skills with lecturer rubric
 review for productive skills, then resolves a CEFR profile using the official
 Aptis 0–200 scale and the Core module as a borderline modifier.
 
-> **Status: Sprint 2 - AG-108 auth QA suites complete.**
+> **Status: Sprint 2 - AG-201 Test schema complete.**
 > The repository now contains two decoupled applications: `client/` (React 19 +
 > Vite 8 + TailwindCSS 4) and `server/` (Node.js + Express 5), gated by ESLint 10
 > and Prettier 3. The API connects to MongoDB Atlas through a pooled Mongoose
-> connection, ships the `User` model, issues stateless HS256 JWTs from
+> connection, ships the `User` model, embeds `Question` sub-documents inside the
+> `Test` schema for data locality, issues stateless HS256 JWTs from
 > `POST /api/auth/register` and `POST /api/auth/login`, exposes `verifyToken`
 > plus role guards, sanitizes MongoDB operator keys, and centralizes error
 > responses. The public authentication portal now serves `/login` and
@@ -21,7 +22,10 @@ Aptis 0–200 scale and the Core module as a borderline modifier.
 > the tab session, Axios attaches the JWT to API requests, and role-specific
 > `/student`, `/lecturer`, and `/admin` workspaces are protected by
 > `ProtectedRoute`. Jest controller tests and a runnable Postman collection now
-> cover TC01–TC03. The remaining models and domain workspace arrive next.
+> cover TC01–TC03. `questions.correctAnswer` and
+> `questions.dropdownSets.correctAnswer` use `select: false`, so default reads
+> omit assessment answers. The remaining Submission model and domain workspace
+> arrive next.
 
 ---
 
@@ -249,6 +253,8 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── src/middleware/authMiddleware.js   # verifyToken, authorizeRoles
 │   ├── src/middleware/errorHandler.js     # 404 + centralized error mapping
 │   ├── src/middleware/mongoSanitize.js    # Express 5 adapter for sanitization
+│   ├── src/models/Question.js       # Embedded question schema and enums
+│   ├── src/models/Test.js           # Test schema embedding questions
 │   ├── src/models/User.js           # User schema, indexes, password hooks
 │   ├── src/routes/authRoutes.js     # /api/auth router
 │   ├── src/utils/jwt.js             # sign/verify HS256 access tokens
@@ -268,7 +274,9 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── #0007-authentication-portal.md
 │   ├── #0008-auth-context-axios-protected-routes.md
 │   ├── #0009-jest-postman-auth-tests.md
-│   └── #0010-accept-any-valid-email.md
+│   ├── #0010-accept-any-valid-email.md
+│   ├── #0011-integrate-aptis-logo.md
+│   └── #0012-test-schema-embedded-questions.md
 ├── diagrams/                        # Exported architecture diagrams (PNG)
 ├── docx/                            # SRS, SAD, DDS, ADS, CSG, BRD, STP
 ├── postman/
@@ -291,6 +299,8 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── password.test.js             # bcrypt hashing Contract
 │   ├── scaffold.test.js             # AG-101 structure + manifest Contract
 │   ├── server-health.test.js        # /api/health and 404 Contract
+│   ├── test-model.test.js           # Test schema, embedded questions, answer hiding
+│   ├── test-repository.integration.test.js  # opt-in embedded answer projection
 │   ├── user-model.test.js           # User schema, indexes, redaction
 │   └── user-repository.integration.test.js  # opt-in real MongoDB check
 ├── eslint.config.js                 # Root (Node) flat config
@@ -487,6 +497,7 @@ built with Vite for production.
 | Server health         | `node --test "tests/*.test.js"`                                              | `GET /api/health` response Contract, 404 Contract, hidden Express fingerprint                                            |
 | Database              | `node --test "tests/*.test.js"`                                              | Pool defaults and bounds, URI scheme rejection, safe disconnect                                                          |
 | User schema           | `node --test "tests/*.test.js"`                                              | Required fields, email normalization, enums, indexes, password hashing, JSON redaction                                   |
+| Test schema           | `node --test "tests/*.test.js"`                                              | Embedded question arrays, enums, defaults, nested answer hiding, `type` index                                            |
 | Auth validator        | `node --test "tests/*.test.js"`                                              | Register/login normalization, bounds, forced server fields                                                               |
 | JWT                   | `node --test "tests/*.test.js"`                                              | Claims, expiry, tamper/wrong-secret rejection, secret strength                                                           |
 | Auth routes           | `node --test "tests/*.test.js"`                                              | 400 Contracts for register/login without a database                                                                      |
@@ -502,6 +513,7 @@ built with Vite for production.
 | Auth API (TC01–TC03)  | `postman collection run postman/collections/aptis-go-auth`                   | Live registration, duplicate email, login, wrong password, unknown email; 11 assertions                                  |
 | Auth round-trip       | `MONGODB_TEST_URI=... node --test tests/auth.integration.test.js`            | Register 201, role forcing, bcrypt, duplicate 409, login 200/401, token claims                                           |
 | Mongo round-trip      | `MONGODB_TEST_URI=... node --test tests/user-repository.integration.test.js` | Real MongoDB save, bcrypt hash, `UNTESTED` default, duplicate-email rejection                                            |
+| Test round-trip       | `MONGODB_TEST_URI=... node --test tests/test-repository.integration.test.js` | Default read omits embedded answers; explicit projection returns them for grading                                        |
 
 TDD is mandatory: write the failing test first, confirm the failure, implement,
 then re-run. Do not weaken a test to make a suite pass.
@@ -567,6 +579,8 @@ gitGraph
 | `design-log/#0008-auth-context-axios-protected-routes.md` | AG-107 AuthContext, Axios JWT, and route guards  |
 | `design-log/#0009-jest-postman-auth-tests.md`             | AG-108 Jest and Postman TC01–TC03 evidence       |
 | `design-log/#0010-accept-any-valid-email.md`              | Any-email validation with optional `@fpt.edu.vn` |
+| `design-log/#0011-integrate-aptis-logo.md`                | Aptis logo assets and transparent backgrounds    |
+| `design-log/#0012-test-schema-embedded-questions.md`      | AG-201 embedded Test/Question schema and NFR02   |
 
 ## Engineering rules
 
@@ -592,6 +606,7 @@ gitGraph
 - [x] AG-106 - Authentication portal (`/login`, `/register`)
 - [x] AG-107 - AuthContext, Axios JWT interceptors, and protected role routes
 - [x] AG-108 - Jest unit tests and Postman assertions for TC01–TC03
+- [x] AG-201 - Test schema with embedded questions and hidden correct answers
 - [ ] Sprint 2 — Express API and Mongoose models per ADS/DDS
 - [ ] Sprint 3 — Student SPA: placement, goals, study plan
 - [ ] Sprint 4 — Lecturer workspace and hybrid grading pipeline
