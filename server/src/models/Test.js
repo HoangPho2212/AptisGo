@@ -63,6 +63,8 @@ const testSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+testSchema.index({ type: 1, isPublished: 1, createdAt: -1 });
+
 module.exports = mongoose.model('Test', testSchema);
 module.exports.TEST_TYPES = TEST_TYPES;
 module.exports.TARGET_CEFR_LEVELS = TARGET_CEFR_LEVELS;
