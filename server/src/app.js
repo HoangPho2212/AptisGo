@@ -3,6 +3,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 
 const authRoutes = require('./routes/authRoutes');
+const testRoutes = require('./routes/testRoutes');
 const mongoSanitize = require('./middleware/mongoSanitize');
 const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
 
@@ -28,6 +29,7 @@ app.get('/api/health', (_request, response) => {
 });
 
 app.use('/api/auth', authRoutes);
+app.use('/api/tests', testRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

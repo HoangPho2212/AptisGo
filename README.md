@@ -8,21 +8,24 @@ APTIS GO combines instant auto-marking for receptive skills with lecturer rubric
 review for productive skills, then resolves a CEFR profile using the official
 Aptis 0–200 scale and the Core module as a borderline modifier.
 
-> **Status: Sprint 2 - AG-202 Goal and StudyPlan schemas complete.**
+> **Status: Sprint 2 - AG-203 placement diagnostic endpoint complete.**
 > The repository now contains two decoupled applications: `client/` (React 19 +
 > Vite 8 + TailwindCSS 4) and `server/` (Node.js + Express 5), gated by ESLint 10
 > and Prettier 3. The API connects to MongoDB Atlas through a pooled Mongoose
 > connection, ships the `User` model, embeds `Question` sub-documents inside the
 > `Test` schema for data locality, and adds one-goal-per-student `Goal` records
-> plus `StudyPlan` documents with embedded `dailyTasks`. It issues stateless
-> HS256 JWTs from `POST /api/auth/register` and `POST /api/auth/login`, exposes
-> `verifyToken` plus role guards, sanitizes MongoDB operator keys, and centralizes
-> error responses. The public authentication portal now serves `/login` and
-> `/register` with role-aware sign-in, any-email validation with an optional
-> `@fpt.edu.vn` suggestion, and a mandatory GDPR consent gate. A React
-> `AuthContext` restores the tab session, Axios attaches the JWT to API requests,
-> and role-specific `/student`, `/lecturer`, and `/admin` workspaces are protected
-> by `ProtectedRoute`. Jest controller tests and a runnable Postman collection now
+> plus `StudyPlan` documents with embedded `dailyTasks`. The new
+> `GET /api/tests/placement` endpoint serves the newest published diagnostic to
+> students in one indexed MongoDB read, with hidden assessment answers and a
+> <500 ms integration check. The API issues stateless HS256 JWTs from
+> `POST /api/auth/register` and `POST /api/auth/login`, exposes `verifyToken` plus
+> role guards, sanitizes MongoDB operator keys, and centralizes error responses.
+> The public authentication portal now serves `/login` and `/register` with
+> role-aware sign-in, any-email validation with an optional `@fpt.edu.vn`
+> suggestion, and a mandatory GDPR consent gate. A React `AuthContext` restores
+> the tab session, Axios attaches the JWT to API requests, and role-specific
+> `/student`, `/lecturer`, and `/admin` workspaces are protected by
+> `ProtectedRoute`. Jest controller tests and a runnable Postman collection now
 > cover TC01–TC03. `questions.correctAnswer` and
 > `questions.dropdownSets.correctAnswer` use `select: false`, so default reads
 > omit assessment answers. The remaining Submission model and domain workspace
@@ -36,6 +39,7 @@ Aptis 0–200 scale and the Core module as a borderline modifier.
 - [Official Aptis alignment](#official-aptis-alignment)
 - [User roles](#user-roles)
 - [Authentication API](#authentication-api)
+- [Placement API](#placement-api)
 - [Tech stack](#tech-stack)
 - [Repository layout](#repository-layout)
 - [Getting started](#getting-started)
@@ -188,6 +192,53 @@ protected server routes still need `verifyToken` and `authorizeRoles`.
 
 ❌ Hiding `/admin` in React without `authorizeRoles('admin')` on the API route.
 
+## Placement API
+
+| Method | Path                   | Access      | Success                             |
+| ------ | ---------------------- | ----------- | ----------------------------------- |
+| `GET`  | `/api/tests/placement` | Student JWT | `200` placement test with questions |
+
+The endpoint returns the newest published diagnostic (`type: "diagnostic"`,
+`isPublished: true`) and all embedded questions. It uses one
+`Test.findOne(...).sort(...).lean()` read and the compound
+`{ type: 1, isPublished: 1, createdAt: -1 }` index. Lecturers and admins receive
+`403`; missing or invalid tokens receive `401`.
+
+```bash
+curl http://localhost:5000/api/tests/placement \
+  -H "Authorization: Bearer <student-token>"
+```
+
+```json
+{
+  "id": "665f...",
+  "title": "Placement Diagnostic",
+  "description": "Baseline CEFR placement",
+  "targetCefr": "B2",
+  "skillModules": ["core", "reading"],
+  "durationMinutes": 25,
+  "questionCount": 2,
+  "questions": [
+    {
+      "id": "665f...",
+      "skill": "core",
+      "part": 1,
+      "questionType": "mcq_single",
+      "prompt": "Choose the correct option.",
+      "options": ["am", "is", "are"]
+    }
+  ]
+}
+```
+
+`questions[].correctAnswer` and
+`questions[].dropdownSets[].correctAnswer` are never returned. The response maps
+`_id` to `id` and omits `__v` and timestamps. If no diagnostic is published:
+`404 { "error": "Placement test not found" }`.
+
+The integration suite seeds 50 questions, asserts exactly one `findOne` call,
+and requires the request to finish under 500 ms on local MongoDB (NFR01).
+
 ## Security and errors
 
 `express-mongo-sanitize` runs after `express.json()` and before routes. It
@@ -246,11 +297,12 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── vite.config.js               # React + Tailwind plugins, /api proxy
 │   └── package.json
 ├── server/                          # Express API (CommonJS)
-│   ├── src/app.js                   # Exported app: health, auth, 404, errors
+│   ├── src/app.js                   # Exported app: health, auth, tests, 404, errors
 │   ├── src/server.js                # Validate config, connect DB, listen
 │   ├── src/config/auth.js           # JWT secret/issuer/audience Contract
 │   ├── src/config/database.js       # Atlas URI + pool Contract
 │   ├── src/controllers/authController.js  # register, login
+│   ├── src/controllers/testController.js  # placement diagnostic delivery
 │   ├── src/middleware/authMiddleware.js   # verifyToken, authorizeRoles
 │   ├── src/middleware/errorHandler.js     # 404 + centralized error mapping
 │   ├── src/middleware/mongoSanitize.js    # Express 5 adapter for sanitization
@@ -260,6 +312,7 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── src/models/Test.js           # Test schema embedding questions
 │   ├── src/models/User.js           # User schema, indexes, password hooks
 │   ├── src/routes/authRoutes.js     # /api/auth router
+│   ├── src/routes/testRoutes.js     # /api/tests placement router
 │   ├── src/utils/jwt.js             # sign/verify HS256 access tokens
 │   ├── src/utils/password.js        # bcryptjs hash/verify (cost 12)
 │   ├── src/validators/authValidator.js    # pure input validation
@@ -280,7 +333,8 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── #0010-accept-any-valid-email.md
 │   ├── #0011-integrate-aptis-logo.md
 │   ├── #0012-test-schema-embedded-questions.md
-│   └── #0013-goal-study-plan-schemas.md
+│   ├── #0013-goal-study-plan-schemas.md
+│   └── #0014-placement-diagnostic-endpoint.md
 ├── diagrams/                        # Exported architecture diagrams (PNG)
 ├── docx/                            # SRS, SAD, DDS, ADS, CSG, BRD, STP
 ├── postman/
@@ -303,6 +357,9 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── jwt.test.js                  # claims, expiry, tamper rejection
 │   ├── mongo-sanitize.test.js       # NoSQL key sanitization + Express 5 adapter
 │   ├── password.test.js             # bcrypt hashing Contract
+│   ├── placement-controller.test.js # placement 404 without a published diagnostic
+│   ├── placement-routes.test.js     # student-only guard and placement index
+│   ├── placement.integration.test.js # opt-in one-query <500 ms placement check
 │   ├── scaffold.test.js             # AG-101 structure + manifest Contract
 │   ├── server-health.test.js        # /api/health and 404 Contract
 │   ├── study-plan-model.test.js     # StudyPlan schema and embedded daily tasks
@@ -421,20 +478,21 @@ npm run format:check            # Prettier verification
 npm --prefix client run build   # production SPA build to client/dist
 ```
 
-Expected test result (both integration tests are skipped without a database):
+Expected test result (database integration tests are skipped without
+`MONGODB_TEST_URI`):
 
 ```text
-ℹ tests 85
-ℹ pass 83
+ℹ tests 116
+ℹ pass 111
 ℹ fail 0
-ℹ skipped 2
+ℹ skipped 5
 ```
 
 Expected UI result:
 
 ```text
-ℹ tests 42
-ℹ pass 42
+ℹ tests 43
+ℹ pass 43
 ℹ fail 0
 ```
 
@@ -446,7 +504,7 @@ Tests:       7 passed, 7 total
 ```
 
 With `MONGODB_TEST_URI` set (local MongoDB or Atlas), `npm test` reports
-**85 passed, 0 failed, 0 skipped**. Run the real-database check against Atlas or
+**116 passed, 0 failed, 0 skipped**. Run the real-database check against Atlas or
 a local MongoDB:
 
 ```bash
@@ -504,7 +562,9 @@ built with Vite for production.
 | Server health         | `node --test "tests/*.test.js"`                                              | `GET /api/health` response Contract, 404 Contract, hidden Express fingerprint                                            |
 | Database              | `node --test "tests/*.test.js"`                                              | Pool defaults and bounds, URI scheme rejection, safe disconnect                                                          |
 | User schema           | `node --test "tests/*.test.js"`                                              | Required fields, email normalization, enums, indexes, password hashing, JSON redaction                                   |
-| Test schema           | `node --test "tests/*.test.js"`                                              | Embedded question arrays, enums, defaults, nested answer hiding, `type` index                                            |
+| Test schema           | `node --test "tests/*.test.js"`                                              | Embedded question arrays, enums, defaults, nested answer hiding, `type` + placement indexes                              |
+| Placement routes      | `node --test "tests/*.test.js"`                                              | Student-only JWT guard, lecturer/admin `403`, and placement index Contract                                               |
+| Placement controller  | `node --test "tests/*.test.js"`                                              | `404 Placement test not found` when no published diagnostic exists                                                       |
 | Goal schema           | `node --test "tests/*.test.js"`                                              | Target certificate enum, deadline cast, defaults, unique student index                                                   |
 | StudyPlan schema      | `node --test "tests/*.test.js"`                                              | Embedded daily tasks, skill enum, points/completion defaults, student index                                              |
 | Auth validator        | `node --test "tests/*.test.js"`                                              | Register/login normalization, bounds, forced server fields                                                               |
@@ -524,6 +584,7 @@ built with Vite for production.
 | Mongo round-trip      | `MONGODB_TEST_URI=... node --test tests/user-repository.integration.test.js` | Real MongoDB save, bcrypt hash, `UNTESTED` default, duplicate-email rejection                                            |
 | Test round-trip       | `MONGODB_TEST_URI=... node --test tests/test-repository.integration.test.js` | Default read omits embedded answers; explicit projection returns them for grading                                        |
 | Goal/plan round-trip  | `MONGODB_TEST_URI=... node --test tests/goal-study-plan.integration.test.js` | Unique goal per student; embedded task defaults and completion persistence                                               |
+| Placement round-trip  | `MONGODB_TEST_URI=... node --test tests/placement.integration.test.js`       | 50-question diagnostic, hidden answers, one query, <500 ms response (NFR01)                                              |
 
 TDD is mandatory: write the failing test first, confirm the failure, implement,
 then re-run. Do not weaken a test to make a suite pass.
@@ -592,6 +653,7 @@ gitGraph
 | `design-log/#0011-integrate-aptis-logo.md`                | Aptis logo assets and transparent backgrounds    |
 | `design-log/#0012-test-schema-embedded-questions.md`      | AG-201 embedded Test/Question schema and NFR02   |
 | `design-log/#0013-goal-study-plan-schemas.md`             | AG-202 Goal and StudyPlan schemas                |
+| `design-log/#0014-placement-diagnostic-endpoint.md`       | AG-203 placement endpoint, NFR01, and NFR02      |
 
 ## Engineering rules
 
@@ -619,6 +681,7 @@ gitGraph
 - [x] AG-108 - Jest unit tests and Postman assertions for TC01–TC03
 - [x] AG-201 - Test schema with embedded questions and hidden correct answers
 - [x] AG-202 - Goal and StudyPlan schemas with embedded daily tasks
+- [x] AG-203 - Placement diagnostic endpoint (single query, <500 ms, NFR01)
 - [ ] Sprint 2 — Express API and Mongoose models per ADS/DDS
 - [ ] Sprint 3 — Student SPA: placement, goals, study plan
 - [ ] Sprint 4 — Lecturer workspace and hybrid grading pipeline
