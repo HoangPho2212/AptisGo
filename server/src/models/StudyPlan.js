@@ -55,6 +55,8 @@ const studyPlanSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+studyPlanSchema.index({ student: 1, dayNumber: 1 }, { unique: true });
+
 module.exports = mongoose.model('StudyPlan', studyPlanSchema);
 module.exports.TASK_SKILLS = TASK_SKILLS;
 module.exports.StudyPlanTaskSchema = studyPlanTaskSchema;
