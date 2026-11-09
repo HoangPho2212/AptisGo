@@ -8,7 +8,7 @@ APTIS GO combines instant auto-marking for receptive skills with lecturer rubric
 review for productive skills, then resolves a CEFR profile using the official
 Aptis 0–200 scale and the Core module as a borderline modifier.
 
-> **Status: Sprint 2 - AG-204 diagnostic evaluation service complete.**
+> **Status: Sprint 2 - AG-205 goal roadmap generator complete.**
 > The repository now contains two decoupled applications: `client/` (React 19 +
 > Vite 8 + TailwindCSS 4) and `server/` (Node.js + Express 5), gated by ESLint 10
 > and Prettier 3. The API connects to MongoDB Atlas through a pooled Mongoose
@@ -19,7 +19,10 @@ Aptis 0–200 scale and the Core module as a borderline modifier.
 > students in one indexed MongoDB read, with hidden assessment answers and a
 > <500 ms integration check. The diagnostic evaluator validates 0-50 skill
 > scores, reuses the JayContract CEFR profile, and persists the resulting
-> `User.currentLevel`. The API issues stateless HS256 JWTs from
+> `User.currentLevel`. The new `POST /api/goals` endpoint rejects past
+> deadlines, calculates remaining days, upserts the student goal, and
+> regenerates one `StudyPlan` per day with a rotating skill-part task template.
+> The API issues stateless HS256 JWTs from
 > `POST /api/auth/register` and `POST /api/auth/login`, exposes `verifyToken` plus
 > role guards, sanitizes MongoDB operator keys, and centralizes error responses.
 > The public authentication portal now serves `/login` and `/register` with
@@ -43,6 +46,7 @@ Aptis 0–200 scale and the Core module as a borderline modifier.
 - [Authentication API](#authentication-api)
 - [Placement API](#placement-api)
 - [Diagnostic evaluation](#diagnostic-evaluation)
+- [Goal API](#goal-api)
 - [Tech stack](#tech-stack)
 - [Repository layout](#repository-layout)
 - [Getting started](#getting-started)
@@ -273,6 +277,56 @@ There is intentionally no public HTTP route in AG-204. The future submission
 endpoint must compute scores from answer keys on the server; accepting raw
 scores from a browser would let a student assign themselves any CEFR level.
 
+## Goal API
+
+| Method | Path         | Access      | Success                             |
+| ------ | ------------ | ----------- | ----------------------------------- |
+| `POST` | `/api/goals` | Student JWT | `201` new goal / `200` updated goal |
+
+```bash
+curl -X POST http://localhost:5000/api/goals \
+  -H "Authorization: Bearer <student-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"targetCertificate":"B2","deadline":"2027-06-30","dailyMinutesTarget":45}'
+```
+
+```json
+{
+  "goal": {
+    "id": "665f...",
+    "targetCertificate": "B2",
+    "deadline": "2027-06-30T23:59:59.999Z",
+    "dailyMinutesTarget": 45,
+    "remainingDays": 233
+  },
+  "roadmap": {
+    "totalDays": 233,
+    "tasksPerDay": 3,
+    "totalTasks": 699,
+    "firstDayNumber": 1,
+    "lastDayNumber": 233
+  }
+}
+```
+
+`POST /api/goals` is student-only. A missing token returns `401`, and lecturers
+or admins receive `403`. A date-only `deadline` (`YYYY-MM-DD`) means the end of
+that UTC day; an ISO datetime is used exactly. Past deadlines return
+`400 { "error": "Deadline must be a future date" }` (STP TC04), and roadmaps
+longer than 1,825 days are rejected.
+
+`remainingDays` is `max(1, ceil((deadline - now) / 24h))`. The default
+`dailyMinutesTarget` is `45`; values must be integers from `15` to `240`.
+`tasksPerDay` is `ceil(dailyMinutesTarget / 15)` clamped to `1-8`, so the default
+produces three tasks per day. Tasks rotate through an 18-template Core,
+Listening, Reading, Writing, and Speaking Part 1-4 sequence, with
+`points: 10` and `isCompleted: false`.
+
+The API persists one `Goal` per student and one `StudyPlan` document per
+remaining day, with embedded `dailyTasks` and a unique
+`{ student, dayNumber }` index. A repeated POST updates the goal, replaces the
+old roadmap, and returns `200` with no duplicate day records.
+
 ## Security and errors
 
 `express-mongo-sanitize` runs after `express.json()` and before routes. It
@@ -331,11 +385,12 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── vite.config.js               # React + Tailwind plugins, /api proxy
 │   └── package.json
 ├── server/                          # Express API (CommonJS)
-│   ├── src/app.js                   # Exported app: health, auth, tests, 404, errors
+│   ├── src/app.js                   # Exported app: health, auth, goals, tests, 404, errors
 │   ├── src/server.js                # Validate config, connect DB, listen
 │   ├── src/config/auth.js           # JWT secret/issuer/audience Contract
 │   ├── src/config/database.js       # Atlas URI + pool Contract
 │   ├── src/controllers/authController.js  # register, login
+│   ├── src/controllers/goalController.js  # goal upsert + roadmap generation
 │   ├── src/controllers/testController.js  # placement diagnostic delivery
 │   ├── src/middleware/authMiddleware.js   # verifyToken, authorizeRoles
 │   ├── src/middleware/errorHandler.js     # 404 + centralized error mapping
@@ -346,11 +401,14 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── src/models/Test.js           # Test schema embedding questions
 │   ├── src/models/User.js           # User schema, indexes, password hooks
 │   ├── src/routes/authRoutes.js     # /api/auth router
+│   ├── src/routes/goalRoutes.js     # /api/goals router
 │   ├── src/routes/testRoutes.js     # /api/tests placement router
 │   ├── src/services/diagnosticEvaluationService.js # CEFR mapping + user level
+│   ├── src/services/roadmapGenerator.js # remaining days + daily task rotation
 │   ├── src/utils/jwt.js             # sign/verify HS256 access tokens
 │   ├── src/utils/password.js        # bcryptjs hash/verify (cost 12)
 │   ├── src/validators/authValidator.js    # pure input validation
+│   ├── src/validators/goalValidator.js    # goal body and cadence validation
 │   ├── eslint.config.js             # Node globals
 │   └── package.json
 ├── contracts/
@@ -370,7 +428,8 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── #0012-test-schema-embedded-questions.md
 │   ├── #0013-goal-study-plan-schemas.md
 │   ├── #0014-placement-diagnostic-endpoint.md
-│   └── #0015-diagnostic-cefr-evaluation.md
+│   ├── #0015-diagnostic-cefr-evaluation.md
+│   └── #0016-goal-roadmap-generator.md
 ├── diagrams/                        # Exported architecture diagrams (PNG)
 ├── docx/                            # SRS, SAD, DDS, ADS, CSG, BRD, STP
 ├── postman/
@@ -389,7 +448,10 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── diagnostic-evaluation.integration.test.js # opt-in User.currentLevel persistence
 │   ├── error-handler.test.js        # centralized error Contract
 │   ├── goal-model.test.js           # Goal schema, certificate enum, deadline
+│   ├── goal-roadmap.integration.test.js  # opt-in goal upsert and roadmap regeneration
+│   ├── goal-routes.test.js          # student-only goal route and 400 Contracts
 │   ├── goal-study-plan.integration.test.js  # opt-in goal uniqueness and task state
+│   ├── goal-validator.test.js       # goal body, certificate, and cadence validation
 │   ├── jest/
 │   │   └── auth-controller.test.js  # TC01-TC03 controller/middleware units
 │   ├── jwt.test.js                  # claims, expiry, tamper rejection
@@ -398,6 +460,7 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── placement-controller.test.js # placement 404 without a published diagnostic
 │   ├── placement-routes.test.js     # student-only guard and placement index
 │   ├── placement.integration.test.js # opt-in one-query <500 ms placement check
+│   ├── roadmap-generator.test.js    # deadline math and task rotation
 │   ├── scaffold.test.js             # AG-101 structure + manifest Contract
 │   ├── server-health.test.js        # /api/health and 404 Contract
 │   ├── study-plan-model.test.js     # StudyPlan schema and embedded daily tasks
@@ -520,10 +583,10 @@ Expected test result (database integration tests are skipped without
 `MONGODB_TEST_URI`):
 
 ```text
-ℹ tests 127
-ℹ pass 121
+ℹ tests 157
+ℹ pass 150
 ℹ fail 0
-ℹ skipped 6
+ℹ skipped 7
 ```
 
 Expected UI result:
@@ -542,7 +605,7 @@ Tests:       7 passed, 7 total
 ```
 
 With `MONGODB_TEST_URI` set (local MongoDB or Atlas), `npm test` reports
-**127 passed, 0 failed, 0 skipped**. Run the real-database check against Atlas or
+**157 passed, 0 failed, 0 skipped**. Run the real-database check against Atlas or
 a local MongoDB:
 
 ```bash
@@ -593,38 +656,42 @@ built with Vite for production.
 
 ## Testing
 
-| Suite                 | Command                                                                            | Scope                                                                                                                    |
-| --------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Contract              | `node --test "tests/*.test.js"`                                                    | Core scaling, CEFR borderline elevation, question validation, writing word limits, speaking timers, listening play limit |
-| Scaffold              | `node --test "tests/*.test.js"`                                                    | Client/server paths, manifest scripts and engines, flat ESLint configs, Prettier Contract                                |
-| Server health         | `node --test "tests/*.test.js"`                                                    | `GET /api/health` response Contract, 404 Contract, hidden Express fingerprint                                            |
-| Database              | `node --test "tests/*.test.js"`                                                    | Pool defaults and bounds, URI scheme rejection, safe disconnect                                                          |
-| User schema           | `node --test "tests/*.test.js"`                                                    | Required fields, email normalization, enums, indexes, password hashing, JSON redaction                                   |
-| Test schema           | `node --test "tests/*.test.js"`                                                    | Embedded question arrays, enums, defaults, nested answer hiding, `type` + placement indexes                              |
-| Placement routes      | `node --test "tests/*.test.js"`                                                    | Student-only JWT guard, lecturer/admin `403`, and placement index Contract                                               |
-| Placement controller  | `node --test "tests/*.test.js"`                                                    | `404 Placement test not found` when no published diagnostic exists                                                       |
-| Diagnostic evaluation | `node --test "tests/*.test.js"`                                                    | 0-50 validation, A1-C1 boundaries, Core modifier, lowest-skill resolution                                                |
-| Goal schema           | `node --test "tests/*.test.js"`                                                    | Target certificate enum, deadline cast, defaults, unique student index                                                   |
-| StudyPlan schema      | `node --test "tests/*.test.js"`                                                    | Embedded daily tasks, skill enum, points/completion defaults, student index                                              |
-| Auth validator        | `node --test "tests/*.test.js"`                                                    | Register/login normalization, bounds, forced server fields                                                               |
-| JWT                   | `node --test "tests/*.test.js"`                                                    | Claims, expiry, tamper/wrong-secret rejection, secret strength                                                           |
-| Auth routes           | `node --test "tests/*.test.js"`                                                    | 400 Contracts for register/login without a database                                                                      |
-| RBAC middleware       | `node --test "tests/*.test.js"`                                                    | Bearer parsing, invalid/expired tokens, role allow/deny, 401/403 Contracts, config errors                                |
-| NoSQL sanitizer       | `node --test "tests/*.test.js"`                                                    | Operator/dotted-key rewriting, nested body data, Express 5 compatibility, ordinary requests                              |
-| Error handler         | `node --test "tests/*.test.js"`                                                    | JSON parse, payload limit, validation, cast, duplicate key, generic 500, headersSent, 404 Contract                       |
-| Auth validation       | `npm run test:ui`                                                                  | Any-email acceptance, password/student-ID bounds, role and consent rules                                                 |
-| Auth portal           | `npm run test:ui`                                                                  | `/login`, `/register`, role mismatch, API calls, session save, redirects, sign out                                       |
-| Axios client          | `npm run test:ui`                                                                  | Bearer request header, 401 session clearing, server/network `ApiError` normalization                                     |
-| Auth context          | `npm run test:ui`                                                                  | Session restore, login/register, logout, role mismatch, 401 state reset                                                  |
-| Protected routes      | `npm run test:ui`                                                                  | Unauthenticated redirect, wrong-role denial, allowed roles, role-home redirect, access-denied recovery                   |
-| Auth unit (TC01–TC03) | `npm run test:jest`                                                                | Register happy/validation/duplicate, login happy/negative, lecturer role guard                                           |
-| Auth API (TC01–TC03)  | `postman collection run postman/collections/aptis-go-auth`                         | Live registration, duplicate email, login, wrong password, unknown email; 11 assertions                                  |
-| Auth round-trip       | `MONGODB_TEST_URI=... node --test tests/auth.integration.test.js`                  | Register 201, role forcing, bcrypt, duplicate 409, login 200/401, token claims                                           |
-| Mongo round-trip      | `MONGODB_TEST_URI=... node --test tests/user-repository.integration.test.js`       | Real MongoDB save, bcrypt hash, `UNTESTED` default, duplicate-email rejection                                            |
-| Test round-trip       | `MONGODB_TEST_URI=... node --test tests/test-repository.integration.test.js`       | Default read omits embedded answers; explicit projection returns them for grading                                        |
-| Goal/plan round-trip  | `MONGODB_TEST_URI=... node --test tests/goal-study-plan.integration.test.js`       | Unique goal per student; embedded task defaults and completion persistence                                               |
-| Placement round-trip  | `MONGODB_TEST_URI=... node --test tests/placement.integration.test.js`             | 50-question diagnostic, hidden answers, one query, <500 ms response (NFR01)                                              |
-| Diagnostic round-trip | `MONGODB_TEST_URI=... node --test tests/diagnostic-evaluation.integration.test.js` | `User.currentLevel` persistence, Core modifier, invalid-input non-mutation, 404 user                                     |
+| Suite                   | Command                                                                            | Scope                                                                                                                    |
+| ----------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Contract                | `node --test "tests/*.test.js"`                                                    | Core scaling, CEFR borderline elevation, question validation, writing word limits, speaking timers, listening play limit |
+| Scaffold                | `node --test "tests/*.test.js"`                                                    | Client/server paths, manifest scripts and engines, flat ESLint configs, Prettier Contract                                |
+| Server health           | `node --test "tests/*.test.js"`                                                    | `GET /api/health` response Contract, 404 Contract, hidden Express fingerprint                                            |
+| Database                | `node --test "tests/*.test.js"`                                                    | Pool defaults and bounds, URI scheme rejection, safe disconnect                                                          |
+| User schema             | `node --test "tests/*.test.js"`                                                    | Required fields, email normalization, enums, indexes, password hashing, JSON redaction                                   |
+| Test schema             | `node --test "tests/*.test.js"`                                                    | Embedded question arrays, enums, defaults, nested answer hiding, `type` + placement indexes                              |
+| Placement routes        | `node --test "tests/*.test.js"`                                                    | Student-only JWT guard, lecturer/admin `403`, and placement index Contract                                               |
+| Placement controller    | `node --test "tests/*.test.js"`                                                    | `404 Placement test not found` when no published diagnostic exists                                                       |
+| Diagnostic evaluation   | `node --test "tests/*.test.js"`                                                    | 0-50 validation, A1-C1 boundaries, Core modifier, lowest-skill resolution                                                |
+| Goal validator          | `node --test "tests/*.test.js"`                                                    | Deadline presence, certificate enum, cadence bounds, defaults                                                            |
+| Roadmap generator       | `node --test "tests/*.test.js"`                                                    | Date-only parsing, past/too-far rejection, remaining days, task rotation, caps                                           |
+| Goal routes             | `node --test "tests/*.test.js"`                                                    | Student-only guard, lecturer/admin `403`, body and deadline `400` Contracts                                              |
+| Goal schema             | `node --test "tests/*.test.js"`                                                    | Target certificate enum, deadline cast, defaults, unique student index                                                   |
+| StudyPlan schema        | `node --test "tests/*.test.js"`                                                    | Embedded daily tasks, skill enum, points/completion defaults, unique student/day index                                   |
+| Auth validator          | `node --test "tests/*.test.js"`                                                    | Register/login normalization, bounds, forced server fields                                                               |
+| JWT                     | `node --test "tests/*.test.js"`                                                    | Claims, expiry, tamper/wrong-secret rejection, secret strength                                                           |
+| Auth routes             | `node --test "tests/*.test.js"`                                                    | 400 Contracts for register/login without a database                                                                      |
+| RBAC middleware         | `node --test "tests/*.test.js"`                                                    | Bearer parsing, invalid/expired tokens, role allow/deny, 401/403 Contracts, config errors                                |
+| NoSQL sanitizer         | `node --test "tests/*.test.js"`                                                    | Operator/dotted-key rewriting, nested body data, Express 5 compatibility, ordinary requests                              |
+| Error handler           | `node --test "tests/*.test.js"`                                                    | JSON parse, payload limit, validation, cast, duplicate key, generic 500, headersSent, 404 Contract                       |
+| Auth validation         | `npm run test:ui`                                                                  | Any-email acceptance, password/student-ID bounds, role and consent rules                                                 |
+| Auth portal             | `npm run test:ui`                                                                  | `/login`, `/register`, role mismatch, API calls, session save, redirects, sign out                                       |
+| Axios client            | `npm run test:ui`                                                                  | Bearer request header, 401 session clearing, server/network `ApiError` normalization                                     |
+| Auth context            | `npm run test:ui`                                                                  | Session restore, login/register, logout, role mismatch, 401 state reset                                                  |
+| Protected routes        | `npm run test:ui`                                                                  | Unauthenticated redirect, wrong-role denial, allowed roles, role-home redirect, access-denied recovery                   |
+| Auth unit (TC01–TC03)   | `npm run test:jest`                                                                | Register happy/validation/duplicate, login happy/negative, lecturer role guard                                           |
+| Auth API (TC01–TC03)    | `postman collection run postman/collections/aptis-go-auth`                         | Live registration, duplicate email, login, wrong password, unknown email; 11 assertions                                  |
+| Auth round-trip         | `MONGODB_TEST_URI=... node --test tests/auth.integration.test.js`                  | Register 201, role forcing, bcrypt, duplicate 409, login 200/401, token claims                                           |
+| Mongo round-trip        | `MONGODB_TEST_URI=... node --test tests/user-repository.integration.test.js`       | Real MongoDB save, bcrypt hash, `UNTESTED` default, duplicate-email rejection                                            |
+| Test round-trip         | `MONGODB_TEST_URI=... node --test tests/test-repository.integration.test.js`       | Default read omits embedded answers; explicit projection returns them for grading                                        |
+| Goal/plan round-trip    | `MONGODB_TEST_URI=... node --test tests/goal-study-plan.integration.test.js`       | Unique goal per student; embedded task defaults and completion persistence                                               |
+| Goal roadmap round-trip | `MONGODB_TEST_URI=... node --test tests/goal-roadmap.integration.test.js`          | Goal upsert, remaining-day plans, task rotation, no duplicate days, past-deadline preservation                           |
+| Placement round-trip    | `MONGODB_TEST_URI=... node --test tests/placement.integration.test.js`             | 50-question diagnostic, hidden answers, one query, <500 ms response (NFR01)                                              |
+| Diagnostic round-trip   | `MONGODB_TEST_URI=... node --test tests/diagnostic-evaluation.integration.test.js` | `User.currentLevel` persistence, Core modifier, invalid-input non-mutation, 404 user                                     |
 
 TDD is mandatory: write the failing test first, confirm the failure, implement,
 then re-run. Do not weaken a test to make a suite pass.
@@ -671,30 +738,31 @@ gitGraph
 
 ## Documentation
 
-| File                                                      | Contents                                         |
-| --------------------------------------------------------- | ------------------------------------------------ |
-| `docx/01_SRS_Project_Overview.md`                         | Scope, roles, KPIs                               |
-| `docx/02_SAD_System_Architecture.md`                      | C4 views, containers, components                 |
-| `docx/03_DDS_Database_Schema.md`                          | Mongoose schemas                                 |
-| `docx/04_ADS_API_Specification.md.md`                     | REST endpoints                                   |
-| `docx/05_CSG_Coding_Standards.md`                         | Security and coding directives                   |
-| `docx/06_BRD_MoSCoW_and_User_Stories.md.md`               | Requirements and user stories                    |
-| `docx/07_STP_Test_Plan_and_RTM.md`                        | Test plan and traceability matrix                |
-| `design-log/#0001-aptis-format-alignment.md`              | Aptis format and scoring decisions               |
-| `design-log/#0002-client-server-scaffold.md`              | AG-101 scaffold, lint, and format decisions      |
-| `design-log/#0003-mongodb-pool-user-schema.md`            | AG-102 pool, User schema, and password decisions |
-| `design-log/#0004-auth-controller-jwt.md`                 | AG-103 register/login and JWT decisions          |
-| `design-log/#0005-rbac-middleware.md`                     | AG-104 verifyToken and role-guard decisions      |
-| `design-log/#0006-nosql-sanitization-error-handler.md`    | AG-105 sanitization and error Contract           |
-| `design-log/#0007-authentication-portal.md`               | AG-106 auth portal, role, email, and consent     |
-| `design-log/#0008-auth-context-axios-protected-routes.md` | AG-107 AuthContext, Axios JWT, and route guards  |
-| `design-log/#0009-jest-postman-auth-tests.md`             | AG-108 Jest and Postman TC01–TC03 evidence       |
-| `design-log/#0010-accept-any-valid-email.md`              | Any-email validation with optional `@fpt.edu.vn` |
-| `design-log/#0011-integrate-aptis-logo.md`                | Aptis logo assets and transparent backgrounds    |
-| `design-log/#0012-test-schema-embedded-questions.md`      | AG-201 embedded Test/Question schema and NFR02   |
-| `design-log/#0013-goal-study-plan-schemas.md`             | AG-202 Goal and StudyPlan schemas                |
-| `design-log/#0014-placement-diagnostic-endpoint.md`       | AG-203 placement endpoint, NFR01, and NFR02      |
-| `design-log/#0015-diagnostic-cefr-evaluation.md`          | AG-204 CEFR evaluation and `currentLevel` update |
+| File                                                      | Contents                                            |
+| --------------------------------------------------------- | --------------------------------------------------- |
+| `docx/01_SRS_Project_Overview.md`                         | Scope, roles, KPIs                                  |
+| `docx/02_SAD_System_Architecture.md`                      | C4 views, containers, components                    |
+| `docx/03_DDS_Database_Schema.md`                          | Mongoose schemas                                    |
+| `docx/04_ADS_API_Specification.md.md`                     | REST endpoints                                      |
+| `docx/05_CSG_Coding_Standards.md`                         | Security and coding directives                      |
+| `docx/06_BRD_MoSCoW_and_User_Stories.md.md`               | Requirements and user stories                       |
+| `docx/07_STP_Test_Plan_and_RTM.md`                        | Test plan and traceability matrix                   |
+| `design-log/#0001-aptis-format-alignment.md`              | Aptis format and scoring decisions                  |
+| `design-log/#0002-client-server-scaffold.md`              | AG-101 scaffold, lint, and format decisions         |
+| `design-log/#0003-mongodb-pool-user-schema.md`            | AG-102 pool, User schema, and password decisions    |
+| `design-log/#0004-auth-controller-jwt.md`                 | AG-103 register/login and JWT decisions             |
+| `design-log/#0005-rbac-middleware.md`                     | AG-104 verifyToken and role-guard decisions         |
+| `design-log/#0006-nosql-sanitization-error-handler.md`    | AG-105 sanitization and error Contract              |
+| `design-log/#0007-authentication-portal.md`               | AG-106 auth portal, role, email, and consent        |
+| `design-log/#0008-auth-context-axios-protected-routes.md` | AG-107 AuthContext, Axios JWT, and route guards     |
+| `design-log/#0009-jest-postman-auth-tests.md`             | AG-108 Jest and Postman TC01–TC03 evidence          |
+| `design-log/#0010-accept-any-valid-email.md`              | Any-email validation with optional `@fpt.edu.vn`    |
+| `design-log/#0011-integrate-aptis-logo.md`                | Aptis logo assets and transparent backgrounds       |
+| `design-log/#0012-test-schema-embedded-questions.md`      | AG-201 embedded Test/Question schema and NFR02      |
+| `design-log/#0013-goal-study-plan-schemas.md`             | AG-202 Goal and StudyPlan schemas                   |
+| `design-log/#0014-placement-diagnostic-endpoint.md`       | AG-203 placement endpoint, NFR01, and NFR02         |
+| `design-log/#0015-diagnostic-cefr-evaluation.md`          | AG-204 CEFR evaluation and `currentLevel` update    |
+| `design-log/#0016-goal-roadmap-generator.md`              | AG-205 goal upsert, remaining days, and daily tasks |
 
 ## Engineering rules
 
@@ -724,7 +792,8 @@ gitGraph
 - [x] AG-202 - Goal and StudyPlan schemas with embedded daily tasks
 - [x] AG-203 - Placement diagnostic endpoint (single query, <500 ms, NFR01)
 - [x] AG-204 - Diagnostic CEFR evaluation and `User.currentLevel` update
-- [ ] Sprint 2 — Express API and Mongoose models per ADS/DDS
+- [x] AG-205 - Goal roadmap generator with remaining days and daily tasks
+- [ ] Sprint 2 - Express API and Mongoose models per ADS/DDS
 - [ ] Sprint 3 — Student SPA: placement, goals, study plan
 - [ ] Sprint 4 — Lecturer workspace and hybrid grading pipeline
 - [ ] Sprint 5 — Admin question bank and analytics, UAT

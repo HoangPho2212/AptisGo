@@ -108,3 +108,15 @@ test('StudyPlan schema: indexes the student reference', () => {
     'student must be indexed'
   );
 });
+
+test('StudyPlan schema: guarantees one plan per student and dayNumber', () => {
+  const indexes = StudyPlan.schema.indexes();
+
+  assert.ok(
+    indexes.some(
+      ([fields, options]) =>
+        fields.student === 1 && fields.dayNumber === 1 && options.unique === true
+    ),
+    'student + dayNumber must have a unique compound index'
+  );
+});
