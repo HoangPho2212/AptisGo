@@ -8,7 +8,7 @@ APTIS GO combines instant auto-marking for receptive skills with lecturer rubric
 review for productive skills, then resolves a CEFR profile using the official
 Aptis 0–200 scale and the Core module as a borderline modifier.
 
-> **Status: Sprint 2 - AG-207 diagnostic placement and goal screens complete.**
+> **Status: Sprint 2 - AG-208 student dashboard complete.**
 > The repository now contains two decoupled applications: `client/` (React 19 +
 > Vite 8 + TailwindCSS 4) and `server/` (Node.js + Express 5), gated by ESLint 10
 > and Prettier 3. The API connects to MongoDB Atlas through a pooled Mongoose
@@ -23,10 +23,13 @@ Aptis 0–200 scale and the Core module as a borderline modifier.
 > deadlines, calculates remaining days, upserts the student goal, and
 > regenerates one `StudyPlan` per day with a rotating skill-part task template,
 > and `PATCH /api/study-plans/tasks/:id` sets an embedded task's completion flag
-> and returns recalculated plan and roadmap progress. The student SPA now serves
-> `/placement` (a question-by-question diagnostic runner) and `/goals` (B1/B2
-> target, deadline picker, and cadence preview), driven by explicit
-> `PlacementViewState` and `GoalViewState` objects.
+> and returns recalculated plan and roadmap progress. `GET /api/study-plans/today`
+> resolves the current UTC day of that roadmap and returns the day's tasks with
+> derived day and roadmap progress. The student SPA now serves `/placement` (a
+> question-by-question diagnostic runner), `/goals` (B1/B2 target, deadline
+> picker, and cadence preview), and `/dashboard` (today's checklist and progress
+> bars), driven by explicit `PlacementViewState`, `GoalViewState`, and
+> `DashboardViewState` objects.
 > The API issues stateless HS256 JWTs from
 > `POST /api/auth/register` and `POST /api/auth/login`, exposes `verifyToken` plus
 > role guards, sanitizes MongoDB operator keys, and centralizes error responses.
@@ -338,6 +341,7 @@ old roadmap, and returns `200` with no duplicate day records.
 
 | Method  | Path                         | Access      | Success                              |
 | ------- | ---------------------------- | ----------- | ------------------------------------ |
+| `GET`   | `/api/study-plans/today`     | Student JWT | `200` goal + day + tasks + progress  |
 | `PATCH` | `/api/study-plans/tasks/:id` | Student JWT | `200` task + plan + roadmap progress |
 
 ```bash
@@ -390,15 +394,75 @@ stored. `percent` has one decimal place and is clamped to `0-100`, so the first
 completion of a 699-task roadmap reports `0.1` rather than `0`. `plan` covers the
 day that owns the task; `roadmap` aggregates every day of the student.
 
+### Today's dashboard read
+
+`GET /api/study-plans/today` returns everything the dashboard needs in one
+request:
+
+```json
+{
+  "goal": {
+    "id": "665f...",
+    "targetCertificate": "B2",
+    "deadline": "2026-12-15",
+    "dailyMinutesTarget": 45
+  },
+  "day": {
+    "id": "66f1...",
+    "dayNumber": 6,
+    "totalDays": 28,
+    "tasks": [
+      {
+        "id": "66f1...",
+        "title": "Core Part 1: Grammar practice",
+        "skill": "core",
+        "partNumber": 1,
+        "points": 10,
+        "isCompleted": false
+      }
+    ]
+  },
+  "progress": {
+    "completedTasks": 0,
+    "totalTasks": 3,
+    "percent": 0,
+    "completedPoints": 0,
+    "totalPoints": 30
+  },
+  "roadmap": {
+    "completedTasks": 4,
+    "totalTasks": 84,
+    "percent": 4.8,
+    "completedPoints": 40,
+    "totalPoints": 840
+  }
+}
+```
+
+`StudyPlan` documents carry a `dayNumber`, not a calendar date, so the API derives
+"today" from the goal: day 1 is the UTC day on which the goal was created, every
+following UTC day adds one, and the result is clamped to the number of stored
+days. The deadline is returned date-only (`YYYY-MM-DD`) because the stored value
+is the end of a UTC day.
+
+- No goal yet returns `404 { "error": "Goal not found" }`; the dashboard maps it to
+  an empty state linking to `/goals`.
+- A goal with no stored day (or no plan for the computed day) returns
+  `404 { "error": "Study plan not found" }`, which the dashboard treats as a
+  retryable error.
+- Progress blocks are derived on every read with the same one-decimal rule as the
+  PATCH response. Tasks are ordered as stored and omit `planId`.
+
 ## Student screens
 
 | Path         | Guard                           | Purpose                                                |
 | ------------ | ------------------------------- | ------------------------------------------------------ |
 | `/placement` | `ProtectedRoute` (student only) | Diagnostic runner backed by `GET /api/tests/placement` |
 | `/goals`     | `ProtectedRoute` (student only) | B1/B2 target, deadline picker, and roadmap generation  |
+| `/dashboard` | `ProtectedRoute` (student only) | Today's checklist and progress bars                    |
 
-Both screens use the shared `StudentShell` header, and the student workspace
-links to them as Step 1 and Step 2.
+All three screens use the shared `StudentShell` header, and the student workspace
+links to them as Step 1, Step 2, and Step 3.
 
 `/placement` renders one question at a time for `mcq_single`, `dropdown_match`,
 and `dropdown_cloze` items, keeps answers in an explicit `PlacementViewState`,
@@ -422,6 +486,16 @@ accepted by the API but is not offered in this form.
 
 `POST /api/goals` is an upsert, so a second submission replaces the roadmap and
 resets task completion; the form states this before the button.
+
+`/dashboard` loads `GET /api/study-plans/today` into an explicit
+`DashboardViewState`. It shows the target, the current day, the deadline, two
+one-decimal progress bars (today and roadmap), and one accessible checkbox per
+task. Ticking a box calls `PATCH /api/study-plans/tasks/:id`, locks every row
+until the answer arrives, then applies the server's `plan` and `roadmap` blocks;
+the browser never calculates percentages. A failed toggle keeps the checklist
+usable and shows the API message, while a missing goal renders an empty state
+with a link to `/goals`. The dashboard does not poll or cache; every visit reads
+the current UTC day.
 
 ## Security and errors
 
@@ -477,7 +551,12 @@ Unknown 5xx details are logged server-side and never returned to the client.
 ├── client/                          # React SPA (ESM)
 │   ├── src/App.jsx                  # Router: auth portal, role workspaces, student screens
 │   ├── src/app/Brand.jsx            # Shared logo block
+│   ├── src/app/ProgressBar.jsx      # Accessible progress bar with aria-valuenow
 │   ├── src/app/StudentShell.jsx     # Student header, navigation, and sign out
+│   ├── src/dashboard/DashboardPage.jsx        # /dashboard today checklist and progress
+│   ├── src/dashboard/TaskChecklist.jsx        # Accessible checkboxes with pending lock
+│   ├── src/dashboard/api.js                   # GET /today and PATCH task wrappers
+│   ├── src/dashboard/dashboardViewState.js    # explicit DashboardViewState
 │   ├── src/goals/GoalsPage.jsx      # /goals target, deadline, and cadence form
 │   ├── src/goals/api.js             # POST /api/goals wrapper
 │   ├── src/goals/goalCadence.js     # remaining days, tasks per day, deadline rules
@@ -515,6 +594,7 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── src/services/diagnosticEvaluationService.js # CEFR mapping + user level
 │   ├── src/services/roadmapGenerator.js # remaining days + daily task rotation
 │   ├── src/services/studyPlanProgress.js # derived task/plan/roadmap progress
+│   ├── src/services/studyPlanSchedule.js # UTC day resolution for /today
 │   ├── src/utils/jwt.js             # sign/verify HS256 access tokens
 │   ├── src/utils/password.js        # bcryptjs hash/verify (cost 12)
 │   ├── src/validators/authValidator.js    # pure input validation
@@ -542,7 +622,8 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── #0015-diagnostic-cefr-evaluation.md
 │   ├── #0016-goal-roadmap-generator.md
 │   ├── #0017-study-plan-task-completion.md
-│   └── #0018-diagnostic-placement-and-goal-screens.md
+│   ├── #0018-diagnostic-placement-and-goal-screens.md
+│   └── #0019-student-dashboard-today-roadmap.md
 ├── diagrams/                        # Exported architecture diagrams (PNG)
 ├── docx/                            # SRS, SAD, DDS, ADS, CSG, BRD, STP
 ├── postman/
@@ -809,6 +890,8 @@ built with Vite for production.
 | Study plan progress        | `node --test "tests/*.test.js"`                                                         | One-decimal percent, clamping, zero totals, point totals, non-boolean completion flags                                   |
 | Study plan validator       | `node --test "tests/*.test.js"`                                                         | Boolean-only `isCompleted`, JSON-object body, 24-hex task id rule                                                        |
 | Study plan routes          | `node --test "tests/*.test.js"`                                                         | Student-only guard, lecturer/admin `403`, invalid id `400`, body `400` Contracts                                         |
+| Study plan schedule        | `node --test "tests/*.test.js"`                                                         | UTC day derivation, midnight rollover, clamping to stored days, invalid input                                            |
+| Study plan today           | `node --test "tests/*.test.js"`                                                         | `GET /api/study-plans/today` payload, `404` paths, cross-student isolation, stale-goal clamp                             |
 | Auth validator             | `node --test "tests/*.test.js"`                                                         | Register/login normalization, bounds, forced server fields                                                               |
 | JWT                        | `node --test "tests/*.test.js"`                                                         | Claims, expiry, tamper/wrong-secret rejection, secret strength                                                           |
 | Auth routes                | `node --test "tests/*.test.js"`                                                         | 400 Contracts for register/login without a database                                                                      |
@@ -825,6 +908,8 @@ built with Vite for production.
 | Goal cadence               | `npm run test:ui`                                                                       | UTC end-of-day parsing, remaining days, tasks per day, preview caps, API validation messages                             |
 | Goal ViewState             | `npm run test:ui`                                                                       | B1/B2 targets, deadline and minutes validation, submit/success/error transitions                                         |
 | Goal screen                | `npm run test:ui`                                                                       | B1/B2 selector, deadline picker, blocked submissions, request body, roadmap summary, server details, captured answers    |
+| Dashboard ViewState        | `npm run test:ui`                                                                       | Payload validation, load/empty/error transitions, pending lock, confirmed task updates, day summary                      |
+| Dashboard screen           | `npm run test:ui`                                                                       | Today checklist, progress bars, PATCH toggle, pending lock, failed toggle, empty state, retry, completion message        |
 | Auth unit (TC01–TC03)      | `npm run test:jest`                                                                     | Register happy/validation/duplicate, login happy/negative, lecturer role guard                                           |
 | Auth API (TC01–TC03)       | `postman collection run postman/collections/aptis-go-auth`                              | Live registration, duplicate email, login, wrong password, unknown email; 11 assertions                                  |
 | Auth round-trip            | `MONGODB_TEST_URI=... node --test tests/auth.integration.test.js`                       | Register 201, role forcing, bcrypt, duplicate 409, login 200/401, token claims                                           |
@@ -908,6 +993,7 @@ gitGraph
 | `design-log/#0016-goal-roadmap-generator.md`                | AG-205 goal upsert, remaining days, and daily tasks |
 | `design-log/#0017-study-plan-task-completion.md`            | AG-206 task completion and derived progress         |
 | `design-log/#0018-diagnostic-placement-and-goal-screens.md` | AG-207 placement runner and goal setting screens    |
+| `design-log/#0019-student-dashboard-today-roadmap.md`       | AG-208 today dashboard read and checklist           |
 
 ## Engineering rules
 
@@ -940,6 +1026,7 @@ gitGraph
 - [x] AG-205 - Goal roadmap generator with remaining days and daily tasks
 - [x] AG-206 - Study plan task completion with recalculated progress
 - [x] AG-207 - Diagnostic placement runner and B1/B2 goal setting screens
+- [x] AG-208 - Today's study roadmap dashboard with derived progress
 - [ ] Sprint 2 - Express API and Mongoose models per ADS/DDS
 - [ ] Sprint 3 — Student SPA: placement, goals, study plan
 - [ ] Sprint 4 — Lecturer workspace and hybrid grading pipeline

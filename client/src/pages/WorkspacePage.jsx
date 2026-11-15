@@ -65,7 +65,7 @@ export default function WorkspacePage() {
         </div>
 
         {role === 'student' ? (
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <Link
               to="/placement"
               className="rounded-2xl border border-teal-400/25 bg-teal-400/10 p-5 transition hover:border-teal-300/40 hover:bg-teal-400/15 focus-visible:ring-2 focus-visible:ring-teal-400/60 focus-visible:outline-none"
@@ -90,6 +90,20 @@ export default function WorkspacePage() {
               <span className="mt-1 block text-sm font-semibold text-white">Set your goal</span>
               <span className="mt-1 block text-xs leading-5 text-slate-400">
                 Choose B1 or B2 and your official test deadline.
+              </span>
+            </Link>
+            <Link
+              to="/dashboard"
+              className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 transition hover:border-white/20 hover:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-teal-400/60 focus-visible:outline-none"
+            >
+              <span className="text-[11px] font-semibold tracking-[0.16em] text-slate-500 uppercase">
+                Step 3
+              </span>
+              <span className="mt-1 block text-sm font-semibold text-white">
+                Work through today
+              </span>
+              <span className="mt-1 block text-xs leading-5 text-slate-400">
+                Tick off today&apos;s tasks and track your roadmap progress.
               </span>
             </Link>
           </div>

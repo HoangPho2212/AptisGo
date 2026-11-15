@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import AuthProvider from './auth/AuthProvider.jsx';
 import ProtectedRoute from './auth/ProtectedRoute.jsx';
 import { useAuth } from './auth/useAuth.js';
+import DashboardPage from './dashboard/DashboardPage.jsx';
 import GoalsPage from './goals/GoalsPage.jsx';
 import AccessDeniedPage from './pages/AccessDeniedPage.jsx';
 import LoginPage from './pages/LoginPage.jsx';
@@ -49,6 +50,14 @@ export default function App() {
             element={
               <ProtectedRoute allowedRoles={['student']}>
                 <GoalsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute allowedRoles={['student']}>
+                <DashboardPage />
               </ProtectedRoute>
             }
           />

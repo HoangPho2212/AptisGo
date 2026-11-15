@@ -1,8 +1,10 @@
 const mongoose = require('mongoose');
 
+const Goal = require('../models/Goal');
 const StudyPlan = require('../models/StudyPlan');
 const { isTaskId, validateTaskCompletionInput } = require('../validators/studyPlanValidator');
 const { calculatePercent, calculateTaskProgress } = require('../services/studyPlanProgress');
+const { calculateCurrentDayNumber } = require('../services/studyPlanSchedule');
 
 /**
  * @param {{ _id: unknown, dayNumber: number, dailyTasks: Array<object> }} plan
@@ -64,6 +66,70 @@ async function calculateRoadmapProgress(student) {
 }
 
 /**
+ * @param {{ _id: unknown, title: string, skill: string, partNumber: number, points: number, isCompleted: boolean }} task
+ * @returns {object}
+ */
+function serializeTodayTask(task) {
+  return {
+    id: String(task._id),
+    title: task.title,
+    skill: task.skill,
+    partNumber: task.partNumber,
+    points: task.points,
+    isCompleted: task.isCompleted === true,
+  };
+}
+
+/**
+ * GET /api/study-plans/today
+ *
+ * Returns the goal summary, the day plan that corresponds to the current UTC
+ * day, and derived progress for that day and for the whole roadmap.
+ *
+ * @param {import('express').Request} request
+ * @param {import('express').Response} response
+ * @returns {Promise<void>}
+ */
+async function getTodayPlan(request, response) {
+  const student = request.user.id;
+  const goal = await Goal.findOne({ student }).lean();
+
+  if (!goal) {
+    return response.status(404).json({ error: 'Goal not found' });
+  }
+
+  const totalDays = await StudyPlan.countDocuments({ student });
+
+  if (totalDays === 0) {
+    return response.status(404).json({ error: 'Study plan not found' });
+  }
+
+  const dayNumber = calculateCurrentDayNumber({ createdAt: goal.createdAt, totalDays });
+  const plan = await StudyPlan.findOne({ student, dayNumber }).lean();
+
+  if (!plan) {
+    return response.status(404).json({ error: 'Study plan not found' });
+  }
+
+  return response.status(200).json({
+    goal: {
+      id: String(goal._id),
+      targetCertificate: goal.targetCertificate,
+      deadline: new Date(goal.deadline).toISOString().slice(0, 10),
+      dailyMinutesTarget: goal.dailyMinutesTarget,
+    },
+    day: {
+      id: String(plan._id),
+      dayNumber: plan.dayNumber,
+      totalDays,
+      tasks: plan.dailyTasks.map(serializeTodayTask),
+    },
+    progress: calculateTaskProgress(plan.dailyTasks),
+    roadmap: await calculateRoadmapProgress(student),
+  });
+}
+
+/**
  * PATCH /api/study-plans/tasks/:id
  *
  * Sets one embedded task's completion flag and returns the recalculated plan
@@ -114,5 +180,7 @@ async function updateTaskCompletion(request, response) {
 module.exports = {
   calculateRoadmapProgress,
   serializeTask,
+  serializeTodayTask,
+  getTodayPlan,
   updateTaskCompletion,
 };

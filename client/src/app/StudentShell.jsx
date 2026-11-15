@@ -6,6 +6,7 @@ import Brand from './Brand.jsx';
 
 const NAV_ITEMS = [
   { id: 'workspace', to: '/student', label: 'Workspace' },
+  { id: 'dashboard', to: '/dashboard', label: 'Dashboard' },
   { id: 'placement', to: '/placement', label: 'Diagnostic' },
   { id: 'goals', to: '/goals', label: 'Goal' },
 ];
