@@ -8,7 +8,7 @@ APTIS GO combines instant auto-marking for receptive skills with lecturer rubric
 review for productive skills, then resolves a CEFR profile using the official
 Aptis 0–200 scale and the Core module as a borderline modifier.
 
-> **Status: Sprint 2 - AG-206 study plan task completion complete.**
+> **Status: Sprint 2 - AG-207 diagnostic placement and goal screens complete.**
 > The repository now contains two decoupled applications: `client/` (React 19 +
 > Vite 8 + TailwindCSS 4) and `server/` (Node.js + Express 5), gated by ESLint 10
 > and Prettier 3. The API connects to MongoDB Atlas through a pooled Mongoose
@@ -23,7 +23,10 @@ Aptis 0–200 scale and the Core module as a borderline modifier.
 > deadlines, calculates remaining days, upserts the student goal, and
 > regenerates one `StudyPlan` per day with a rotating skill-part task template,
 > and `PATCH /api/study-plans/tasks/:id` sets an embedded task's completion flag
-> and returns recalculated plan and roadmap progress.
+> and returns recalculated plan and roadmap progress. The student SPA now serves
+> `/placement` (a question-by-question diagnostic runner) and `/goals` (B1/B2
+> target, deadline picker, and cadence preview), driven by explicit
+> `PlacementViewState` and `GoalViewState` objects.
 > The API issues stateless HS256 JWTs from
 > `POST /api/auth/register` and `POST /api/auth/login`, exposes `verifyToken` plus
 > role guards, sanitizes MongoDB operator keys, and centralizes error responses.
@@ -50,6 +53,7 @@ Aptis 0–200 scale and the Core module as a borderline modifier.
 - [Diagnostic evaluation](#diagnostic-evaluation)
 - [Goal API](#goal-api)
 - [Study plan API](#study-plan-api)
+- [Student screens](#student-screens)
 - [Tech stack](#tech-stack)
 - [Repository layout](#repository-layout)
 - [Getting started](#getting-started)
@@ -386,6 +390,39 @@ stored. `percent` has one decimal place and is clamped to `0-100`, so the first
 completion of a 699-task roadmap reports `0.1` rather than `0`. `plan` covers the
 day that owns the task; `roadmap` aggregates every day of the student.
 
+## Student screens
+
+| Path         | Guard                           | Purpose                                                |
+| ------------ | ------------------------------- | ------------------------------------------------------ |
+| `/placement` | `ProtectedRoute` (student only) | Diagnostic runner backed by `GET /api/tests/placement` |
+| `/goals`     | `ProtectedRoute` (student only) | B1/B2 target, deadline picker, and roadmap generation  |
+
+Both screens use the shared `StudentShell` header, and the student workspace
+links to them as Step 1 and Step 2.
+
+`/placement` renders one question at a time for `mcq_single`, `dropdown_match`,
+and `dropdown_cloze` items, keeps answers in an explicit `PlacementViewState`,
+and mirrors them to `sessionStorage` under `aptis-go:placement-progress` so a
+reload or a visit to `/goals` keeps the work. Writing, speaking, ordering, and
+short-field items render with a notice because those inputs belong to the exam
+runner (FR05).
+
+No CEFR result is shown. Answers are never posted, and the API never sends
+`correctAnswer`, so the client cannot mark them. Marking is FR04
+(`POST /api/submissions`, TC05) and remains a later ticket; finishing the
+diagnostic records the capture and links to goal setting.
+
+`/goals` offers the B1/B2 selector, a date-only deadline picker, and a daily
+minutes target (15-240, default 45). Validation mirrors the API: `deadline is
+required`, `deadline must be a valid ISO date`, `Deadline must be a future date`,
+and `dailyMinutesTarget must be an integer between 15 and 240`. The cadence
+preview reuses the 15-minutes-per-task, 1-8-tasks-per-day, 1,825-day rules from
+the server, and a date-only deadline means the end of that UTC day. C1 remains
+accepted by the API but is not offered in this form.
+
+`POST /api/goals` is an upsert, so a second submission replaces the roadmap and
+resets task completion; the form states this before the button.
+
 ## Security and errors
 
 `express-mongo-sanitize` runs after `express.json()` and before routes. It
@@ -438,7 +475,18 @@ Unknown 5xx details are logged server-side and never returned to the client.
 ```text
 .
 ├── client/                          # React SPA (ESM)
-│   ├── src/App.jsx                  # Router: auth portal, role workspaces, guards
+│   ├── src/App.jsx                  # Router: auth portal, role workspaces, student screens
+│   ├── src/app/Brand.jsx            # Shared logo block
+│   ├── src/app/StudentShell.jsx     # Student header, navigation, and sign out
+│   ├── src/goals/GoalsPage.jsx      # /goals target, deadline, and cadence form
+│   ├── src/goals/api.js             # POST /api/goals wrapper
+│   ├── src/goals/goalCadence.js     # remaining days, tasks per day, deadline rules
+│   ├── src/goals/goalViewState.js   # explicit GoalViewState and validation
+│   ├── src/placement/PlacementPage.jsx          # /placement diagnostic runner
+│   ├── src/placement/PlacementQuestionCard.jsx  # MCQ and dropdown question inputs
+│   ├── src/placement/api.js                     # GET /api/tests/placement wrapper
+│   ├── src/placement/placementProgressStorage.js # sessionStorage answer mirror
+│   ├── src/placement/placementViewState.js      # explicit PlacementViewState
 │   ├── src/index.css                # TailwindCSS entry (@import + @theme)
 │   ├── eslint.config.js             # Browser globals + React hooks rules
 │   ├── vite.config.js               # React + Tailwind plugins, /api proxy
@@ -493,7 +541,8 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── #0014-placement-diagnostic-endpoint.md
 │   ├── #0015-diagnostic-cefr-evaluation.md
 │   ├── #0016-goal-roadmap-generator.md
-│   └── #0017-study-plan-task-completion.md
+│   ├── #0017-study-plan-task-completion.md
+│   └── #0018-diagnostic-placement-and-goal-screens.md
 ├── diagrams/                        # Exported architecture diagrams (PNG)
 ├── docx/                            # SRS, SAD, DDS, ADS, CSG, BRD, STP
 ├── postman/
@@ -549,7 +598,13 @@ Frontend test files:
 - `tests/auth-portal.test.jsx` — route, role, API, session, and consent behaviour
 - `tests/auth-context.test.jsx` — session restore, login/register, logout, and 401 state
 - `tests/axios-client.test.jsx` — Bearer header and error normalization
+- `tests/goal-cadence.test.jsx` — deadline parsing, remaining days, and task caps
+- `tests/goal-screen.test.jsx` — B1/B2 form, validation, request body, roadmap summary
+- `tests/goal-view-state.test.jsx` — `GoalViewState` transitions and validation
+- `tests/placement-screen.test.jsx` — runner loading, navigation, finish gate, retry
+- `tests/placement-view-state.test.jsx` — `PlacementViewState` answers and completion
 - `tests/protected-route.test.jsx` — unauthenticated, wrong-role, and allowed-role routes
+- `tests/screen-fixtures.jsx` — shared session and diagnostic fixture
 - `tests/setup.js` — Testing Library cleanup and matchers
 - `vitest.config.mjs` — jsdom, React/Axios dedupe, and `tests/**/*.test.jsx` discovery
 
@@ -569,6 +624,17 @@ Auth portal modules:
 - `client/src/auth/authStorage.js` — tab-scoped session persistence
 - `client/src/auth/AuthLayout.jsx`, `RoleSelector.jsx`, `FormField.jsx`, `PasswordField.jsx`, `ConsentField.jsx`, `AuthAlert.jsx`
 - `client/src/pages/LoginPage.jsx`, `RegisterPage.jsx`, `WorkspacePage.jsx`, `AccessDeniedPage.jsx`
+
+Student screen modules:
+
+- `client/src/app/StudentShell.jsx` — student header, navigation, and sign out
+- `client/src/app/Brand.jsx` — shared logo block used by both layouts
+- `client/src/placement/placementViewState.js` — pure `PlacementViewState` helpers
+- `client/src/placement/placementProgressStorage.js` — versioned sessionStorage mirror
+- `client/src/placement/PlacementPage.jsx`, `PlacementQuestionCard.jsx`, `api.js`
+- `client/src/goals/goalViewState.js` — pure `GoalViewState` helpers
+- `client/src/goals/goalCadence.js` — deadline, remaining days, and task caps
+- `client/src/goals/GoalsPage.jsx`, `api.js`
 
 ## Getting started
 
@@ -660,8 +726,8 @@ Expected test result (database integration tests are skipped without
 Expected UI result:
 
 ```text
-ℹ tests 43
-ℹ pass 43
+ℹ tests 94
+ℹ pass 94
 ℹ fail 0
 ```
 
@@ -754,6 +820,11 @@ built with Vite for production.
 | Axios client               | `npm run test:ui`                                                                       | Bearer request header, 401 session clearing, server/network `ApiError` normalization                                     |
 | Auth context               | `npm run test:ui`                                                                       | Session restore, login/register, logout, role mismatch, 401 state reset                                                  |
 | Protected routes           | `npm run test:ui`                                                                       | Unauthenticated redirect, wrong-role denial, allowed roles, role-home redirect, access-denied recovery                   |
+| Placement ViewState        | `npm run test:ui`                                                                       | Answer keys, dropdown completion, navigation clamping, finish gate, saved-progress hydration                             |
+| Placement screen           | `npm run test:ui`                                                                       | Test load, question navigation, answer retention, unanswerable notice, finish summary, 404, retry                        |
+| Goal cadence               | `npm run test:ui`                                                                       | UTC end-of-day parsing, remaining days, tasks per day, preview caps, API validation messages                             |
+| Goal ViewState             | `npm run test:ui`                                                                       | B1/B2 targets, deadline and minutes validation, submit/success/error transitions                                         |
+| Goal screen                | `npm run test:ui`                                                                       | B1/B2 selector, deadline picker, blocked submissions, request body, roadmap summary, server details, captured answers    |
 | Auth unit (TC01–TC03)      | `npm run test:jest`                                                                     | Register happy/validation/duplicate, login happy/negative, lecturer role guard                                           |
 | Auth API (TC01–TC03)       | `postman collection run postman/collections/aptis-go-auth`                              | Live registration, duplicate email, login, wrong password, unknown email; 11 assertions                                  |
 | Auth round-trip            | `MONGODB_TEST_URI=... node --test tests/auth.integration.test.js`                       | Register 201, role forcing, bcrypt, duplicate 409, login 200/401, token claims                                           |
@@ -810,32 +881,33 @@ gitGraph
 
 ## Documentation
 
-| File                                                      | Contents                                            |
-| --------------------------------------------------------- | --------------------------------------------------- |
-| `docx/01_SRS_Project_Overview.md`                         | Scope, roles, KPIs                                  |
-| `docx/02_SAD_System_Architecture.md`                      | C4 views, containers, components                    |
-| `docx/03_DDS_Database_Schema.md`                          | Mongoose schemas                                    |
-| `docx/04_ADS_API_Specification.md.md`                     | REST endpoints                                      |
-| `docx/05_CSG_Coding_Standards.md`                         | Security and coding directives                      |
-| `docx/06_BRD_MoSCoW_and_User_Stories.md.md`               | Requirements and user stories                       |
-| `docx/07_STP_Test_Plan_and_RTM.md`                        | Test plan and traceability matrix                   |
-| `design-log/#0001-aptis-format-alignment.md`              | Aptis format and scoring decisions                  |
-| `design-log/#0002-client-server-scaffold.md`              | AG-101 scaffold, lint, and format decisions         |
-| `design-log/#0003-mongodb-pool-user-schema.md`            | AG-102 pool, User schema, and password decisions    |
-| `design-log/#0004-auth-controller-jwt.md`                 | AG-103 register/login and JWT decisions             |
-| `design-log/#0005-rbac-middleware.md`                     | AG-104 verifyToken and role-guard decisions         |
-| `design-log/#0006-nosql-sanitization-error-handler.md`    | AG-105 sanitization and error Contract              |
-| `design-log/#0007-authentication-portal.md`               | AG-106 auth portal, role, email, and consent        |
-| `design-log/#0008-auth-context-axios-protected-routes.md` | AG-107 AuthContext, Axios JWT, and route guards     |
-| `design-log/#0009-jest-postman-auth-tests.md`             | AG-108 Jest and Postman TC01–TC03 evidence          |
-| `design-log/#0010-accept-any-valid-email.md`              | Any-email validation with optional `@fpt.edu.vn`    |
-| `design-log/#0011-integrate-aptis-logo.md`                | Aptis logo assets and transparent backgrounds       |
-| `design-log/#0012-test-schema-embedded-questions.md`      | AG-201 embedded Test/Question schema and NFR02      |
-| `design-log/#0013-goal-study-plan-schemas.md`             | AG-202 Goal and StudyPlan schemas                   |
-| `design-log/#0014-placement-diagnostic-endpoint.md`       | AG-203 placement endpoint, NFR01, and NFR02         |
-| `design-log/#0015-diagnostic-cefr-evaluation.md`          | AG-204 CEFR evaluation and `currentLevel` update    |
-| `design-log/#0016-goal-roadmap-generator.md`              | AG-205 goal upsert, remaining days, and daily tasks |
-| `design-log/#0017-study-plan-task-completion.md`          | AG-206 task completion and derived progress         |
+| File                                                        | Contents                                            |
+| ----------------------------------------------------------- | --------------------------------------------------- |
+| `docx/01_SRS_Project_Overview.md`                           | Scope, roles, KPIs                                  |
+| `docx/02_SAD_System_Architecture.md`                        | C4 views, containers, components                    |
+| `docx/03_DDS_Database_Schema.md`                            | Mongoose schemas                                    |
+| `docx/04_ADS_API_Specification.md.md`                       | REST endpoints                                      |
+| `docx/05_CSG_Coding_Standards.md`                           | Security and coding directives                      |
+| `docx/06_BRD_MoSCoW_and_User_Stories.md.md`                 | Requirements and user stories                       |
+| `docx/07_STP_Test_Plan_and_RTM.md`                          | Test plan and traceability matrix                   |
+| `design-log/#0001-aptis-format-alignment.md`                | Aptis format and scoring decisions                  |
+| `design-log/#0002-client-server-scaffold.md`                | AG-101 scaffold, lint, and format decisions         |
+| `design-log/#0003-mongodb-pool-user-schema.md`              | AG-102 pool, User schema, and password decisions    |
+| `design-log/#0004-auth-controller-jwt.md`                   | AG-103 register/login and JWT decisions             |
+| `design-log/#0005-rbac-middleware.md`                       | AG-104 verifyToken and role-guard decisions         |
+| `design-log/#0006-nosql-sanitization-error-handler.md`      | AG-105 sanitization and error Contract              |
+| `design-log/#0007-authentication-portal.md`                 | AG-106 auth portal, role, email, and consent        |
+| `design-log/#0008-auth-context-axios-protected-routes.md`   | AG-107 AuthContext, Axios JWT, and route guards     |
+| `design-log/#0009-jest-postman-auth-tests.md`               | AG-108 Jest and Postman TC01–TC03 evidence          |
+| `design-log/#0010-accept-any-valid-email.md`                | Any-email validation with optional `@fpt.edu.vn`    |
+| `design-log/#0011-integrate-aptis-logo.md`                  | Aptis logo assets and transparent backgrounds       |
+| `design-log/#0012-test-schema-embedded-questions.md`        | AG-201 embedded Test/Question schema and NFR02      |
+| `design-log/#0013-goal-study-plan-schemas.md`               | AG-202 Goal and StudyPlan schemas                   |
+| `design-log/#0014-placement-diagnostic-endpoint.md`         | AG-203 placement endpoint, NFR01, and NFR02         |
+| `design-log/#0015-diagnostic-cefr-evaluation.md`            | AG-204 CEFR evaluation and `currentLevel` update    |
+| `design-log/#0016-goal-roadmap-generator.md`                | AG-205 goal upsert, remaining days, and daily tasks |
+| `design-log/#0017-study-plan-task-completion.md`            | AG-206 task completion and derived progress         |
+| `design-log/#0018-diagnostic-placement-and-goal-screens.md` | AG-207 placement runner and goal setting screens    |
 
 ## Engineering rules
 
@@ -867,6 +939,7 @@ gitGraph
 - [x] AG-204 - Diagnostic CEFR evaluation and `User.currentLevel` update
 - [x] AG-205 - Goal roadmap generator with remaining days and daily tasks
 - [x] AG-206 - Study plan task completion with recalculated progress
+- [x] AG-207 - Diagnostic placement runner and B1/B2 goal setting screens
 - [ ] Sprint 2 - Express API and Mongoose models per ADS/DDS
 - [ ] Sprint 3 — Student SPA: placement, goals, study plan
 - [ ] Sprint 4 — Lecturer workspace and hybrid grading pipeline

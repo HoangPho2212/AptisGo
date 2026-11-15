@@ -3,10 +3,12 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import AuthProvider from './auth/AuthProvider.jsx';
 import ProtectedRoute from './auth/ProtectedRoute.jsx';
 import { useAuth } from './auth/useAuth.js';
+import GoalsPage from './goals/GoalsPage.jsx';
 import AccessDeniedPage from './pages/AccessDeniedPage.jsx';
 import LoginPage from './pages/LoginPage.jsx';
 import RegisterPage from './pages/RegisterPage.jsx';
 import WorkspacePage from './pages/WorkspacePage.jsx';
+import PlacementPage from './placement/PlacementPage.jsx';
 
 function RoleHomeRedirect() {
   const { isAuthenticated, role } = useAuth();
@@ -31,6 +33,22 @@ export default function App() {
             element={
               <ProtectedRoute allowedRoles={['student']}>
                 <WorkspacePage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/placement"
+            element={
+              <ProtectedRoute allowedRoles={['student']}>
+                <PlacementPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/goals"
+            element={
+              <ProtectedRoute allowedRoles={['student']}>
+                <GoalsPage />
               </ProtectedRoute>
             }
           />
