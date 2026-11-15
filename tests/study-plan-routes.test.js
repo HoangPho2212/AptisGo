@@ -109,3 +109,33 @@ test('PATCH /api/study-plans/tasks/:id validates the completion flag before Mong
     });
   });
 });
+
+function getToday(baseUrl, token) {
+  return fetch(`${baseUrl}/api/study-plans/today`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+}
+
+test('GET /api/study-plans/today requires a bearer token', async () => {
+  await withServer(async (baseUrl) => {
+    const response = await getToday(baseUrl, null);
+
+    assert.equal(response.status, 401);
+    assert.equal(response.headers.get('www-authenticate'), 'Bearer');
+    assert.deepEqual(await response.json(), { error: 'Authentication required' });
+  });
+});
+
+test('GET /api/study-plans/today rejects lecturer and admin roles', async () => {
+  await withServer(async (baseUrl) => {
+    for (const [role, id] of [
+      ['lecturer', LECTURER_ID],
+      ['admin', ADMIN_ID],
+    ]) {
+      const response = await getToday(baseUrl, tokenFor(role, id));
+
+      assert.equal(response.status, 403, `${role} must not read a student roadmap`);
+      assert.deepEqual(await response.json(), { error: 'Forbidden' });
+    }
+  });
+});
