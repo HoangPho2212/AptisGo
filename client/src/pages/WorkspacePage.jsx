@@ -1,4 +1,4 @@
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 
 import AuthLayout from '../auth/AuthLayout.jsx';
 import { getRoleLabel } from '../auth/authValidation.js';
@@ -8,8 +8,8 @@ const WORKSPACES = {
   student: {
     eyebrow: 'Student workspace',
     title: 'Student workspace',
-    subtitle: 'Your placement, CEFR goal, and daily study roadmap will live here.',
-    next: 'Screen 2 will add the adaptive placement runner and the personalised study plan.',
+    subtitle: 'Your placement, CEFR goal, and daily study roadmap live here.',
+    next: 'Start with the diagnostic, then set the certificate and deadline that generate your roadmap.',
   },
   lecturer: {
     eyebrow: 'Lecturer workspace',
@@ -63,6 +63,37 @@ export default function WorkspacePage() {
             </span>
           </div>
         </div>
+
+        {role === 'student' ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Link
+              to="/placement"
+              className="rounded-2xl border border-teal-400/25 bg-teal-400/10 p-5 transition hover:border-teal-300/40 hover:bg-teal-400/15 focus-visible:ring-2 focus-visible:ring-teal-400/60 focus-visible:outline-none"
+            >
+              <span className="text-[11px] font-semibold tracking-[0.16em] text-teal-300 uppercase">
+                Step 1
+              </span>
+              <span className="mt-1 block text-sm font-semibold text-white">
+                Take the diagnostic
+              </span>
+              <span className="mt-1 block text-xs leading-5 text-slate-400">
+                Capture answers across the Aptis skills.
+              </span>
+            </Link>
+            <Link
+              to="/goals"
+              className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 transition hover:border-white/20 hover:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-teal-400/60 focus-visible:outline-none"
+            >
+              <span className="text-[11px] font-semibold tracking-[0.16em] text-slate-500 uppercase">
+                Step 2
+              </span>
+              <span className="mt-1 block text-sm font-semibold text-white">Set your goal</span>
+              <span className="mt-1 block text-xs leading-5 text-slate-400">
+                Choose B1 or B2 and your official test deadline.
+              </span>
+            </Link>
+          </div>
+        ) : null}
 
         <div className="rounded-2xl border border-dashed border-white/15 bg-slate-950/30 p-5 text-sm leading-6 text-slate-400">
           <p className="font-medium text-slate-200">This route is role-guarded.</p>
