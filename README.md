@@ -8,7 +8,7 @@ APTIS GO combines instant auto-marking for receptive skills with lecturer rubric
 review for productive skills, then resolves a CEFR profile using the official
 Aptis 0–200 scale and the Core module as a borderline modifier.
 
-> **Status: Sprint 2 - AG-208 student dashboard complete.**
+> **Status: Sprint 3 - AG-301 submission schema complete.**
 > The repository now contains two decoupled applications: `client/` (React 19 +
 > Vite 8 + TailwindCSS 4) and `server/` (Node.js + Express 5), gated by ESLint 10
 > and Prettier 3. The API connects to MongoDB Atlas through a pooled Mongoose
@@ -29,7 +29,12 @@ Aptis 0–200 scale and the Core module as a borderline modifier.
 > question-by-question diagnostic runner), `/goals` (B1/B2 target, deadline
 > picker, and cadence preview), and `/dashboard` (today's checklist and progress
 > bars), driven by explicit `PlacementViewState`, `GoalViewState`, and
-> `DashboardViewState` objects.
+> `DashboardViewState` objects. The new `Submission` model stores one document
+> per attempt: a `details` array of per-question evaluations, `autoScore`,
+> `manualScore`, and `totalScore`, plus an
+> `in_progress | pending_review | completed` status. Subjective scores stay
+> `null` until lecturer review, and `totalScore` stays `null` until every score
+> exists.
 > The API issues stateless HS256 JWTs from
 > `POST /api/auth/register` and `POST /api/auth/login`, exposes `verifyToken` plus
 > role guards, sanitizes MongoDB operator keys, and centralizes error responses.
@@ -585,6 +590,7 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── src/models/Goal.js           # Target certificate and deadline
 │   ├── src/models/Question.js       # Embedded question schema and enums
 │   ├── src/models/StudyPlan.js      # Daily plan with embedded tasks
+│   ├── src/models/Submission.js     # Attempt details, hybrid scores, and status
 │   ├── src/models/Test.js           # Test schema embedding questions
 │   ├── src/models/User.js           # User schema, indexes, password hooks
 │   ├── src/routes/authRoutes.js     # /api/auth router
@@ -892,6 +898,8 @@ built with Vite for production.
 | Study plan routes          | `node --test "tests/*.test.js"`                                                         | Student-only guard, lecturer/admin `403`, invalid id `400`, body `400` Contracts                                         |
 | Study plan schedule        | `node --test "tests/*.test.js"`                                                         | UTC day derivation, midnight rollover, clamping to stored days, invalid input                                            |
 | Study plan today           | `node --test "tests/*.test.js"`                                                         | `GET /api/study-plans/today` payload, `404` paths, cross-student isolation, stale-goal clamp                             |
+| Submission schema          | `node --test "tests/*.test.js"`                                                         | Required refs, status enum, score defaults/bounds, detail enums, word count, feedback cap, indexes, Contracts            |
+| Submission integration     | `node --test "tests/*.test.js"`                                                         | Opt-in detail persistence, null grading scores, lecturer score/feedback update                                           |
 | Auth validator             | `node --test "tests/*.test.js"`                                                         | Register/login normalization, bounds, forced server fields                                                               |
 | JWT                        | `node --test "tests/*.test.js"`                                                         | Claims, expiry, tamper/wrong-secret rejection, secret strength                                                           |
 | Auth routes                | `node --test "tests/*.test.js"`                                                         | 400 Contracts for register/login without a database                                                                      |
@@ -994,6 +1002,7 @@ gitGraph
 | `design-log/#0017-study-plan-task-completion.md`            | AG-206 task completion and derived progress         |
 | `design-log/#0018-diagnostic-placement-and-goal-screens.md` | AG-207 placement runner and goal setting screens    |
 | `design-log/#0019-student-dashboard-today-roadmap.md`       | AG-208 today dashboard read and checklist           |
+| `design-log/#0020-submission-schema.md`                     | AG-301 submission details, scores, and status       |
 
 ## Engineering rules
 
@@ -1027,6 +1036,7 @@ gitGraph
 - [x] AG-206 - Study plan task completion with recalculated progress
 - [x] AG-207 - Diagnostic placement runner and B1/B2 goal setting screens
 - [x] AG-208 - Today's study roadmap dashboard with derived progress
+- [x] AG-301 - Submission schema with details, hybrid scores, and status
 - [ ] Sprint 2 - Express API and Mongoose models per ADS/DDS
 - [ ] Sprint 3 — Student SPA: placement, goals, study plan
 - [ ] Sprint 4 — Lecturer workspace and hybrid grading pipeline
