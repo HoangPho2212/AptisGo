@@ -1,4 +1,4 @@
-const OBJECT_ID_PATTERN = /^[0-9a-fA-F]{24}$/;
+const { OBJECT_ID_PATTERN, isObjectId } = require('./objectIdValidator');
 
 /**
  * @param {unknown} body
@@ -36,15 +36,14 @@ function validateTaskCompletionInput(body) {
 }
 
 /**
- * Accept only the 24-character hexadecimal text form of an ObjectId. Mongoose
- * `isValidObjectId` is intentionally not used because it also accepts
- * arbitrary 12-character strings.
+ * A task id is an embedded document id, so it follows the shared ObjectId
+ * Contract.
  *
  * @param {unknown} value
  * @returns {boolean}
  */
 function isTaskId(value) {
-  return typeof value === 'string' && OBJECT_ID_PATTERN.test(value);
+  return isObjectId(value);
 }
 
 module.exports = {
