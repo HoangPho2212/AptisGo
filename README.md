@@ -8,7 +8,7 @@ APTIS GO combines instant auto-marking for receptive skills with lecturer rubric
 review for productive skills, then resolves a CEFR profile using the official
 Aptis 0–200 scale and the Core module as a borderline modifier.
 
-> **Status: Sprint 3 - AG-301 submission schema complete.**
+> **Status: Sprint 3 - AG-302 test detail endpoint complete.**
 > The repository now contains two decoupled applications: `client/` (React 19 +
 > Vite 8 + TailwindCSS 4) and `server/` (Node.js + Express 5), gated by ESLint 10
 > and Prettier 3. The API connects to MongoDB Atlas through a pooled Mongoose
@@ -17,7 +17,8 @@ Aptis 0–200 scale and the Core module as a borderline modifier.
 > plus `StudyPlan` documents with embedded `dailyTasks`. The new
 > `GET /api/tests/placement` endpoint serves the newest published diagnostic to
 > students in one indexed MongoDB read, with hidden assessment answers and a
-> <500 ms integration check. The diagnostic evaluator validates 0-50 skill
+> <500 ms integration check. `GET /api/tests/:id` serves any published test by
+> id through the same answer-free question projection. The diagnostic evaluator validates 0-50 skill
 > scores, reuses the JayContract CEFR profile, and persists the resulting
 > `User.currentLevel`. The new `POST /api/goals` endpoint rejects past
 > deadlines, calculates remaining days, upserts the student goal, and
@@ -46,8 +47,8 @@ Aptis 0–200 scale and the Core module as a borderline modifier.
 > `ProtectedRoute`. Jest controller tests and a runnable Postman collection now
 > cover TC01–TC03. `questions.correctAnswer` and
 > `questions.dropdownSets.correctAnswer` use `select: false`, so default reads
-> omit assessment answers. The remaining Submission model and domain workspace
-> arrive next.
+> omit assessment answers. Submission routes, the marking pipeline, and the
+> domain workspace arrive next.
 
 ---
 
@@ -58,6 +59,7 @@ Aptis 0–200 scale and the Core module as a borderline modifier.
 - [User roles](#user-roles)
 - [Authentication API](#authentication-api)
 - [Placement API](#placement-api)
+- [Test detail API](#test-detail-api)
 - [Diagnostic evaluation](#diagnostic-evaluation)
 - [Goal API](#goal-api)
 - [Study plan API](#study-plan-api)
@@ -260,6 +262,57 @@ curl http://localhost:5000/api/tests/placement \
 
 The integration suite seeds 50 questions, asserts exactly one `findOne` call,
 and requires the request to finish under 500 ms on local MongoDB (NFR01).
+
+## Test detail API
+
+| Method | Path             | Access      | Success                                 |
+| ------ | ---------------- | ----------- | --------------------------------------- |
+| `GET`  | `/api/tests/:id` | Student JWT | `200` one published test with questions |
+
+Serves any published test by its 24-hex id. The lookup is a single `_id` read
+filtered by `isPublished: true`, and the response is rebuilt from an allowlist,
+so `correctAnswer` is absent at the question level and inside `dropdownSets`.
+Lecturers and admins receive `403`; a malformed id receives
+`400 { "error": "Invalid identifier" }` before any database call.
+
+```bash
+curl http://localhost:5000/api/tests/<test-id> \
+  -H "Authorization: Bearer <student-token>"
+```
+
+```json
+{
+  "id": "665f...",
+  "title": "Mock Exam 1",
+  "description": "Full-length mock",
+  "type": "mock",
+  "targetCefr": "B2",
+  "skillModules": ["core", "reading"],
+  "durationMinutes": 90,
+  "questionCount": 1,
+  "questions": [
+    {
+      "id": "665f...",
+      "skill": "core",
+      "part": 1,
+      "questionType": "mcq_single",
+      "prompt": "Choose the correct option.",
+      "options": ["am", "is", "are"]
+    }
+  ]
+}
+```
+
+Unpublished and unknown ids both answer `404 { "error": "Test not found" }`, so
+the route never discloses that a test exists but is hidden. `isPublished`,
+`__v`, and timestamps are internal and are never returned.
+
+`GET /api/tests/placement` is registered before `GET /api/tests/:id`, so
+`"placement"` is never parsed as an id.
+
+The integration suite seeds one published and one unpublished test, asserts a
+single `Test.findOne` call, deep-scans the body for `correctAnswer`, and
+requires the request to finish under 500 ms (NFR01).
 
 ## Diagnostic evaluation
 
@@ -583,7 +636,7 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── src/controllers/authController.js  # register, login
 │   ├── src/controllers/goalController.js  # goal upsert + roadmap generation
 │   ├── src/controllers/studyPlanController.js # task completion + progress
-│   ├── src/controllers/testController.js  # placement diagnostic delivery
+│   ├── src/controllers/testController.js  # placement and test detail delivery
 │   ├── src/middleware/authMiddleware.js   # verifyToken, authorizeRoles
 │   ├── src/middleware/errorHandler.js     # 404 + centralized error mapping
 │   ├── src/middleware/mongoSanitize.js    # Express 5 adapter for sanitization
@@ -596,7 +649,7 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── src/routes/authRoutes.js     # /api/auth router
 │   ├── src/routes/goalRoutes.js     # /api/goals router
 │   ├── src/routes/studyPlanRoutes.js # /api/study-plans router
-│   ├── src/routes/testRoutes.js     # /api/tests placement router
+│   ├── src/routes/testRoutes.js     # /api/tests placement and detail router
 │   ├── src/services/diagnosticEvaluationService.js # CEFR mapping + user level
 │   ├── src/services/roadmapGenerator.js # remaining days + daily task rotation
 │   ├── src/services/studyPlanProgress.js # derived task/plan/roadmap progress
@@ -605,6 +658,7 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── src/utils/password.js        # bcryptjs hash/verify (cost 12)
 │   ├── src/validators/authValidator.js    # pure input validation
 │   ├── src/validators/goalValidator.js    # goal body and cadence validation
+│   ├── src/validators/objectIdValidator.js # shared 24-hex ObjectId Contract
 │   ├── src/validators/studyPlanValidator.js # task id and completion validation
 │   ├── eslint.config.js             # Node globals
 │   └── package.json
@@ -629,7 +683,9 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── #0016-goal-roadmap-generator.md
 │   ├── #0017-study-plan-task-completion.md
 │   ├── #0018-diagnostic-placement-and-goal-screens.md
-│   └── #0019-student-dashboard-today-roadmap.md
+│   ├── #0019-student-dashboard-today-roadmap.md
+│   ├── #0020-submission-schema.md
+│   └── #0021-test-detail-endpoint.md
 ├── diagrams/                        # Exported architecture diagrams (PNG)
 ├── docx/                            # SRS, SAD, DDS, ADS, CSG, BRD, STP
 ├── postman/
@@ -887,6 +943,9 @@ built with Vite for production.
 | Test schema                | `node --test "tests/*.test.js"`                                                         | Embedded question arrays, enums, defaults, nested answer hiding, `type` + placement indexes                              |
 | Placement routes           | `node --test "tests/*.test.js"`                                                         | Student-only JWT guard, lecturer/admin `403`, and placement index Contract                                               |
 | Placement controller       | `node --test "tests/*.test.js"`                                                         | `404 Placement test not found` when no published diagnostic exists                                                       |
+| ObjectId validator         | `node --test "tests/*.test.js"`                                                         | 24-hex accept, string-only rule, rejection of instance/buffer/non-hex values                                             |
+| Test detail controller     | `node --test "tests/*.test.js"`                                                         | `400` without a DB read, published-only filter, answer exclusion, `404`, `200`, allowlist serializer                     |
+| Test detail routes         | `node --test "tests/*.test.js"`                                                         | Student-only guard, lecturer/admin `403`, invalid id `400`, `/placement` precedence                                      |
 | Diagnostic evaluation      | `node --test "tests/*.test.js"`                                                         | 0-50 validation, A1-C1 boundaries, Core modifier, lowest-skill resolution                                                |
 | Goal validator             | `node --test "tests/*.test.js"`                                                         | Deadline presence, certificate enum, cadence bounds, defaults                                                            |
 | Roadmap generator          | `node --test "tests/*.test.js"`                                                         | Date-only parsing, past/too-far rejection, remaining days, task rotation, caps                                           |
@@ -926,6 +985,7 @@ built with Vite for production.
 | Goal/plan round-trip       | `MONGODB_TEST_URI=... node --test tests/goal-study-plan.integration.test.js`            | Unique goal per student; embedded task defaults and completion persistence                                               |
 | Goal roadmap round-trip    | `MONGODB_TEST_URI=... node --test tests/goal-roadmap.integration.test.js`               | Goal upsert, remaining-day plans, task rotation, no duplicate days, past-deadline preservation                           |
 | Placement round-trip       | `MONGODB_TEST_URI=... node --test tests/placement.integration.test.js`                  | 50-question diagnostic, hidden answers, one query, <500 ms response (NFR01)                                              |
+| Test detail round-trip     | `MONGODB_TEST_URI=... node --test tests/test-detail.integration.test.js`                | Published test by id, unpublished/unknown `404`, hidden nested answers, one query, <500 ms                               |
 | Diagnostic round-trip      | `MONGODB_TEST_URI=... node --test tests/diagnostic-evaluation.integration.test.js`      | `User.currentLevel` persistence, Core modifier, invalid-input non-mutation, 404 user                                     |
 | Task completion round-trip | `MONGODB_TEST_URI=... node --test tests/study-plan-task-completion.integration.test.js` | Embedded flag persistence, plan/roadmap percentages, idempotent retry, cross-student `404`                               |
 
@@ -1003,6 +1063,7 @@ gitGraph
 | `design-log/#0018-diagnostic-placement-and-goal-screens.md` | AG-207 placement runner and goal setting screens    |
 | `design-log/#0019-student-dashboard-today-roadmap.md`       | AG-208 today dashboard read and checklist           |
 | `design-log/#0020-submission-schema.md`                     | AG-301 submission details, scores, and status       |
+| `design-log/#0021-test-detail-endpoint.md`                  | AG-302 single-test delivery and hidden answers      |
 
 ## Engineering rules
 
@@ -1037,6 +1098,7 @@ gitGraph
 - [x] AG-207 - Diagnostic placement runner and B1/B2 goal setting screens
 - [x] AG-208 - Today's study roadmap dashboard with derived progress
 - [x] AG-301 - Submission schema with details, hybrid scores, and status
+- [x] AG-302 - Single-test delivery with answer keys hidden
 - [ ] Sprint 2 - Express API and Mongoose models per ADS/DDS
 - [ ] Sprint 3 — Student SPA: placement, goals, study plan
 - [ ] Sprint 4 — Lecturer workspace and hybrid grading pipeline
