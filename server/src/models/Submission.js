@@ -114,6 +114,38 @@ const submissionSchema = new mongoose.Schema(
       },
       default: 'completed',
     },
+    skillScores: {
+      core: {
+        type: Number,
+        default: 0,
+        min: [0, 'skillScores.core must be at least 0'],
+        max: [50, 'skillScores.core must be at most 50'],
+      },
+      reading: {
+        type: Number,
+        default: 0,
+        min: [0, 'skillScores.reading must be at least 0'],
+        max: [50, 'skillScores.reading must be at most 50'],
+      },
+      listening: {
+        type: Number,
+        default: 0,
+        min: [0, 'skillScores.listening must be at least 0'],
+        max: [50, 'skillScores.listening must be at most 50'],
+      },
+      writing: {
+        type: Number,
+        default: null,
+        min: [0, 'skillScores.writing must be at least 0'],
+        max: [50, 'skillScores.writing must be at most 50'],
+      },
+      speaking: {
+        type: Number,
+        default: null,
+        min: [0, 'skillScores.speaking must be at least 0'],
+        max: [50, 'skillScores.speaking must be at most 50'],
+      },
+    },
     details: {
       type: [submissionDetailSchema],
       default: [],

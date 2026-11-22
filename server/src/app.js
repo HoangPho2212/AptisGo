@@ -5,6 +5,7 @@ const helmet = require('helmet');
 const authRoutes = require('./routes/authRoutes');
 const goalRoutes = require('./routes/goalRoutes');
 const studyPlanRoutes = require('./routes/studyPlanRoutes');
+const submissionRoutes = require('./routes/submissionRoutes');
 const testRoutes = require('./routes/testRoutes');
 const mongoSanitize = require('./middleware/mongoSanitize');
 const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
@@ -33,6 +34,7 @@ app.get('/api/health', (_request, response) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/goals', goalRoutes);
 app.use('/api/study-plans', studyPlanRoutes);
+app.use('/api/submissions', submissionRoutes);
 app.use('/api/tests', testRoutes);
 
 app.use(notFoundHandler);
