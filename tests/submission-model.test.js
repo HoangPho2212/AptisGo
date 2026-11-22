@@ -63,6 +63,43 @@ test('Submission schema: applies safe defaults without inventing grades', async 
   assert.equal(submission.details[0]._id, undefined, 'details must not generate their own id');
 });
 
+test('Submission schema: stores per-skill scores with null manual skills', async () => {
+  const submission = new Submission(VALID_SUBMISSION);
+
+  await submission.validate();
+
+  assert.equal(submission.skillScores.core, 0);
+  assert.equal(submission.skillScores.reading, 0);
+  assert.equal(submission.skillScores.listening, 0);
+  assert.equal(submission.skillScores.writing, null);
+  assert.equal(submission.skillScores.speaking, null);
+
+  const scored = new Submission({
+    ...VALID_SUBMISSION,
+    skillScores: { core: 50, reading: 35, listening: 40 },
+  });
+  await scored.validate();
+
+  assert.equal(scored.skillScores.core, 50);
+  assert.equal(scored.skillScores.reading, 35);
+  assert.equal(scored.skillScores.listening, 40);
+  assert.equal(scored.skillScores.writing, null);
+  assert.equal(scored.skillScores.speaking, null);
+
+  assert.ok(
+    (await errorsFor({ skillScores: { reading: 51 } })).includes('skillScores.reading'),
+    'reading above 50 must fail'
+  );
+  assert.ok(
+    (await errorsFor({ skillScores: { core: -1 } })).includes('skillScores.core'),
+    'core below 0 must fail'
+  );
+  assert.ok(
+    (await errorsFor({ skillScores: { writing: 51 } })).includes('skillScores.writing'),
+    'writing is still bounded when graded'
+  );
+});
+
 test('Submission schema: accepts every documented status and rejects unknown ones', async () => {
   for (const status of ['in_progress', 'pending_review', 'completed']) {
     assert.deepEqual(await errorsFor({ status }), []);

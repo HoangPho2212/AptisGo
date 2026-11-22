@@ -8,7 +8,7 @@ APTIS GO combines instant auto-marking for receptive skills with lecturer rubric
 review for productive skills, then resolves a CEFR profile using the official
 Aptis 0–200 scale and the Core module as a borderline modifier.
 
-> **Status: Sprint 3 - AG-302 test detail endpoint complete.**
+> **Status: Sprint 3 - AG-303 auto-marking engine complete.**
 > The repository now contains two decoupled applications: `client/` (React 19 +
 > Vite 8 + TailwindCSS 4) and `server/` (Node.js + Express 5), gated by ESLint 10
 > and Prettier 3. The API connects to MongoDB Atlas through a pooled Mongoose
@@ -18,7 +18,11 @@ Aptis 0–200 scale and the Core module as a borderline modifier.
 > `GET /api/tests/placement` endpoint serves the newest published diagnostic to
 > students in one indexed MongoDB read, with hidden assessment answers and a
 > <500 ms integration check. `GET /api/tests/:id` serves any published test by
-> id through the same answer-free question projection. The diagnostic evaluator validates 0-50 skill
+> id through the same answer-free question projection. The new
+> `POST /api/submissions` endpoint marks Core, Reading, and Listening
+> deterministically against the stored answer keys, stores the per-question
+> `details` and per-skill 0-50 scores, and routes Writing/Speaking attempts to
+> `pending_review`. The diagnostic evaluator validates 0-50 skill
 > scores, reuses the JayContract CEFR profile, and persists the resulting
 > `User.currentLevel`. The new `POST /api/goals` endpoint rejects past
 > deadlines, calculates remaining days, upserts the student goal, and
@@ -35,7 +39,8 @@ Aptis 0–200 scale and the Core module as a borderline modifier.
 > `manualScore`, and `totalScore`, plus an
 > `in_progress | pending_review | completed` status. Subjective scores stay
 > `null` until lecturer review, and `totalScore` stays `null` until every score
-> exists.
+> exists. Core is reported separately because the official 200-point aggregate
+> covers only Reading, Listening, Writing, and Speaking.
 > The API issues stateless HS256 JWTs from
 > `POST /api/auth/register` and `POST /api/auth/login`, exposes `verifyToken` plus
 > role guards, sanitizes MongoDB operator keys, and centralizes error responses.
@@ -60,6 +65,7 @@ Aptis 0–200 scale and the Core module as a borderline modifier.
 - [Authentication API](#authentication-api)
 - [Placement API](#placement-api)
 - [Test detail API](#test-detail-api)
+- [Submission API](#submission-api)
 - [Diagnostic evaluation](#diagnostic-evaluation)
 - [Goal API](#goal-api)
 - [Study plan API](#study-plan-api)
@@ -313,6 +319,93 @@ the route never discloses that a test exists but is hidden. `isPublished`,
 The integration suite seeds one published and one unpublished test, asserts a
 single `Test.findOne` call, deep-scans the body for `correctAnswer`, and
 requires the request to finish under 500 ms (NFR01).
+
+## Submission API
+
+| Method | Path               | Access      | Success                         |
+| ------ | ------------------ | ----------- | ------------------------------- |
+| `POST` | `/api/submissions` | Student JWT | `201` marked submission summary |
+
+The endpoint grades Core, Reading, and Listening on the server from the stored
+answer keys, persists one `Submission`, and never trusts a client-provided
+score. Writing and Speaking answers are stored but left ungraded.
+
+```bash
+curl -X POST http://localhost:5000/api/submissions \
+  -H "Authorization: Bearer <student-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "testId": "665f...71",
+    "answers": [
+      { "questionId": "665f...72", "submittedAnswer": 1 },
+      { "questionId": "665f...73", "submittedAnswer": { "665f...74": 0 } },
+      { "questionId": "665f...75", "submittedAnswer": ["665f...76", "665f...77"] },
+      { "questionId": "665f...78", "submittedAnswer": "Dear Sir, ..." },
+      { "questionId": "665f...79", "submittedAnswer": null, "mediaUrl": "/audio/a.webm" }
+    ]
+  }'
+```
+
+Answer shapes:
+
+| `questionType`                     | `submittedAnswer`                                            |
+| ---------------------------------- | ------------------------------------------------------------ |
+| `mcq_single`                       | option index or `null`                                       |
+| `dropdown_match`, `dropdown_cloze` | `{ "<dropdownSetId>": optionIndex }` or `null`               |
+| `sentence_order`                   | every sentence id, each once, in the chosen order, or `null` |
+| `short_fields`                     | `{ "<fieldId>": "text" }` or `null`                          |
+| `essay_text`                       | string up to 20,000 characters or `null`                     |
+| `audio_record`                     | `null`; the recording path goes in `mediaUrl`                |
+
+```json
+{
+  "id": "665f...90",
+  "test": { "id": "665f...71", "title": "Mock Exam 1", "type": "mock" },
+  "status": "pending_review",
+  "autoScore": 100,
+  "manualScore": null,
+  "totalScore": null,
+  "skillScores": {
+    "core": 25,
+    "reading": 25,
+    "listening": 50,
+    "writing": null,
+    "speaking": null
+  },
+  "questionCount": 5,
+  "answeredCount": 5,
+  "createdAt": "2026-11-22T13:45:00.000Z"
+}
+```
+
+Marking is deterministic:
+
+- `skillScore = round(earnedMarks / totalMarks × 50)`, with unanswered questions
+  still in the denominator.
+- `mcq_single` is one mark; each `dropdownSets[]` entry is one mark; a
+  `sentence_order` is one all-or-nothing mark.
+- `autoScore = core + reading + listening` (0-150).
+- `totalScore = reading + listening` for a completed objective-only attempt,
+  because Core is a CEFR borderline modifier and is excluded from the official
+  0-200 four-skill aggregate. It stays `null` while Writing/Speaking await
+  review.
+- A test containing Writing or Speaking questions produces
+  `status: "pending_review"`, `manualScore: null`, and `totalScore: null`.
+- `wordCount` and every score are computed server-side.
+
+Failures:
+
+| Status | Body                                                 | When                                                                                         |
+| ------ | ---------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `400`  | `{ "error": "Validation failed", "details": [...] }` | bad body, unknown/duplicate question id, or an answer shape that does not match its question |
+| `401`  | `{ "error": "Authentication required" }`             | missing token                                                                                |
+| `403`  | `{ "error": "Forbidden" }`                           | lecturer or admin                                                                            |
+| `404`  | `{ "error": "Test not found" }`                      | unknown or unpublished test                                                                  |
+
+Each submission is one indexed test read plus one insert. The integration suite
+seeds a mixed test, asserts exactly one `Test.findOne` call, checks the stored
+details, retakes the same payload for deterministic scores, and requires the
+request to finish under 500 ms (NFR01).
 
 ## Diagnostic evaluation
 
@@ -629,13 +722,14 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── vite.config.js               # React + Tailwind plugins, /api proxy
 │   └── package.json
 ├── server/                          # Express API (CommonJS)
-│   ├── src/app.js                   # Exported app: health, auth, goals, study plans, tests
+│   ├── src/app.js                   # Exported app: health, auth, goals, plans, submissions, tests
 │   ├── src/server.js                # Validate config, connect DB, listen
 │   ├── src/config/auth.js           # JWT secret/issuer/audience Contract
 │   ├── src/config/database.js       # Atlas URI + pool Contract
 │   ├── src/controllers/authController.js  # register, login
 │   ├── src/controllers/goalController.js  # goal upsert + roadmap generation
 │   ├── src/controllers/studyPlanController.js # task completion + progress
+│   ├── src/controllers/submissionController.js # POST /api/submissions marking
 │   ├── src/controllers/testController.js  # placement and test detail delivery
 │   ├── src/middleware/authMiddleware.js   # verifyToken, authorizeRoles
 │   ├── src/middleware/errorHandler.js     # 404 + centralized error mapping
@@ -649,7 +743,9 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── src/routes/authRoutes.js     # /api/auth router
 │   ├── src/routes/goalRoutes.js     # /api/goals router
 │   ├── src/routes/studyPlanRoutes.js # /api/study-plans router
+│   ├── src/routes/submissionRoutes.js # /api/submissions router
 │   ├── src/routes/testRoutes.js     # /api/tests placement and detail router
+│   ├── src/services/autoMarkingService.js # deterministic R/L/G marking and scaling
 │   ├── src/services/diagnosticEvaluationService.js # CEFR mapping + user level
 │   ├── src/services/roadmapGenerator.js # remaining days + daily task rotation
 │   ├── src/services/studyPlanProgress.js # derived task/plan/roadmap progress
@@ -660,6 +756,7 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── src/validators/goalValidator.js    # goal body and cadence validation
 │   ├── src/validators/objectIdValidator.js # shared 24-hex ObjectId Contract
 │   ├── src/validators/studyPlanValidator.js # task id and completion validation
+│   ├── src/validators/submissionValidator.js # body and per-question answer validation
 │   ├── eslint.config.js             # Node globals
 │   └── package.json
 ├── contracts/
@@ -685,7 +782,8 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── #0018-diagnostic-placement-and-goal-screens.md
 │   ├── #0019-student-dashboard-today-roadmap.md
 │   ├── #0020-submission-schema.md
-│   └── #0021-test-detail-endpoint.md
+│   ├── #0021-test-detail-endpoint.md
+│   └── #0022-submission-auto-marking.md
 ├── diagrams/                        # Exported architecture diagrams (PNG)
 ├── docx/                            # SRS, SAD, DDS, ADS, CSG, BRD, STP
 ├── postman/
@@ -933,61 +1031,66 @@ built with Vite for production.
 
 ## Testing
 
-| Suite                      | Command                                                                                 | Scope                                                                                                                    |
-| -------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Contract                   | `node --test "tests/*.test.js"`                                                         | Core scaling, CEFR borderline elevation, question validation, writing word limits, speaking timers, listening play limit |
-| Scaffold                   | `node --test "tests/*.test.js"`                                                         | Client/server paths, manifest scripts and engines, flat ESLint configs, Prettier Contract                                |
-| Server health              | `node --test "tests/*.test.js"`                                                         | `GET /api/health` response Contract, 404 Contract, hidden Express fingerprint                                            |
-| Database                   | `node --test "tests/*.test.js"`                                                         | Pool defaults and bounds, URI scheme rejection, safe disconnect                                                          |
-| User schema                | `node --test "tests/*.test.js"`                                                         | Required fields, email normalization, enums, indexes, password hashing, JSON redaction                                   |
-| Test schema                | `node --test "tests/*.test.js"`                                                         | Embedded question arrays, enums, defaults, nested answer hiding, `type` + placement indexes                              |
-| Placement routes           | `node --test "tests/*.test.js"`                                                         | Student-only JWT guard, lecturer/admin `403`, and placement index Contract                                               |
-| Placement controller       | `node --test "tests/*.test.js"`                                                         | `404 Placement test not found` when no published diagnostic exists                                                       |
-| ObjectId validator         | `node --test "tests/*.test.js"`                                                         | 24-hex accept, string-only rule, rejection of instance/buffer/non-hex values                                             |
-| Test detail controller     | `node --test "tests/*.test.js"`                                                         | `400` without a DB read, published-only filter, answer exclusion, `404`, `200`, allowlist serializer                     |
-| Test detail routes         | `node --test "tests/*.test.js"`                                                         | Student-only guard, lecturer/admin `403`, invalid id `400`, `/placement` precedence                                      |
-| Diagnostic evaluation      | `node --test "tests/*.test.js"`                                                         | 0-50 validation, A1-C1 boundaries, Core modifier, lowest-skill resolution                                                |
-| Goal validator             | `node --test "tests/*.test.js"`                                                         | Deadline presence, certificate enum, cadence bounds, defaults                                                            |
-| Roadmap generator          | `node --test "tests/*.test.js"`                                                         | Date-only parsing, past/too-far rejection, remaining days, task rotation, caps                                           |
-| Goal routes                | `node --test "tests/*.test.js"`                                                         | Student-only guard, lecturer/admin `403`, body and deadline `400` Contracts                                              |
-| Goal schema                | `node --test "tests/*.test.js"`                                                         | Target certificate enum, deadline cast, defaults, unique student index                                                   |
-| StudyPlan schema           | `node --test "tests/*.test.js"`                                                         | Embedded daily tasks, skill enum, points/completion defaults, unique student/day index                                   |
-| Study plan progress        | `node --test "tests/*.test.js"`                                                         | One-decimal percent, clamping, zero totals, point totals, non-boolean completion flags                                   |
-| Study plan validator       | `node --test "tests/*.test.js"`                                                         | Boolean-only `isCompleted`, JSON-object body, 24-hex task id rule                                                        |
-| Study plan routes          | `node --test "tests/*.test.js"`                                                         | Student-only guard, lecturer/admin `403`, invalid id `400`, body `400` Contracts                                         |
-| Study plan schedule        | `node --test "tests/*.test.js"`                                                         | UTC day derivation, midnight rollover, clamping to stored days, invalid input                                            |
-| Study plan today           | `node --test "tests/*.test.js"`                                                         | `GET /api/study-plans/today` payload, `404` paths, cross-student isolation, stale-goal clamp                             |
-| Submission schema          | `node --test "tests/*.test.js"`                                                         | Required refs, status enum, score defaults/bounds, detail enums, word count, feedback cap, indexes, Contracts            |
-| Submission integration     | `node --test "tests/*.test.js"`                                                         | Opt-in detail persistence, null grading scores, lecturer score/feedback update                                           |
-| Auth validator             | `node --test "tests/*.test.js"`                                                         | Register/login normalization, bounds, forced server fields                                                               |
-| JWT                        | `node --test "tests/*.test.js"`                                                         | Claims, expiry, tamper/wrong-secret rejection, secret strength                                                           |
-| Auth routes                | `node --test "tests/*.test.js"`                                                         | 400 Contracts for register/login without a database                                                                      |
-| RBAC middleware            | `node --test "tests/*.test.js"`                                                         | Bearer parsing, invalid/expired tokens, role allow/deny, 401/403 Contracts, config errors                                |
-| NoSQL sanitizer            | `node --test "tests/*.test.js"`                                                         | Operator/dotted-key rewriting, nested body data, Express 5 compatibility, ordinary requests                              |
-| Error handler              | `node --test "tests/*.test.js"`                                                         | JSON parse, payload limit, validation, cast, duplicate key, generic 500, headersSent, 404 Contract                       |
-| Auth validation            | `npm run test:ui`                                                                       | Any-email acceptance, password/student-ID bounds, role and consent rules                                                 |
-| Auth portal                | `npm run test:ui`                                                                       | `/login`, `/register`, role mismatch, API calls, session save, redirects, sign out                                       |
-| Axios client               | `npm run test:ui`                                                                       | Bearer request header, 401 session clearing, server/network `ApiError` normalization                                     |
-| Auth context               | `npm run test:ui`                                                                       | Session restore, login/register, logout, role mismatch, 401 state reset                                                  |
-| Protected routes           | `npm run test:ui`                                                                       | Unauthenticated redirect, wrong-role denial, allowed roles, role-home redirect, access-denied recovery                   |
-| Placement ViewState        | `npm run test:ui`                                                                       | Answer keys, dropdown completion, navigation clamping, finish gate, saved-progress hydration                             |
-| Placement screen           | `npm run test:ui`                                                                       | Test load, question navigation, answer retention, unanswerable notice, finish summary, 404, retry                        |
-| Goal cadence               | `npm run test:ui`                                                                       | UTC end-of-day parsing, remaining days, tasks per day, preview caps, API validation messages                             |
-| Goal ViewState             | `npm run test:ui`                                                                       | B1/B2 targets, deadline and minutes validation, submit/success/error transitions                                         |
-| Goal screen                | `npm run test:ui`                                                                       | B1/B2 selector, deadline picker, blocked submissions, request body, roadmap summary, server details, captured answers    |
-| Dashboard ViewState        | `npm run test:ui`                                                                       | Payload validation, load/empty/error transitions, pending lock, confirmed task updates, day summary                      |
-| Dashboard screen           | `npm run test:ui`                                                                       | Today checklist, progress bars, PATCH toggle, pending lock, failed toggle, empty state, retry, completion message        |
-| Auth unit (TC01–TC03)      | `npm run test:jest`                                                                     | Register happy/validation/duplicate, login happy/negative, lecturer role guard                                           |
-| Auth API (TC01–TC03)       | `postman collection run postman/collections/aptis-go-auth`                              | Live registration, duplicate email, login, wrong password, unknown email; 11 assertions                                  |
-| Auth round-trip            | `MONGODB_TEST_URI=... node --test tests/auth.integration.test.js`                       | Register 201, role forcing, bcrypt, duplicate 409, login 200/401, token claims                                           |
-| Mongo round-trip           | `MONGODB_TEST_URI=... node --test tests/user-repository.integration.test.js`            | Real MongoDB save, bcrypt hash, `UNTESTED` default, duplicate-email rejection                                            |
-| Test round-trip            | `MONGODB_TEST_URI=... node --test tests/test-repository.integration.test.js`            | Default read omits embedded answers; explicit projection returns them for grading                                        |
-| Goal/plan round-trip       | `MONGODB_TEST_URI=... node --test tests/goal-study-plan.integration.test.js`            | Unique goal per student; embedded task defaults and completion persistence                                               |
-| Goal roadmap round-trip    | `MONGODB_TEST_URI=... node --test tests/goal-roadmap.integration.test.js`               | Goal upsert, remaining-day plans, task rotation, no duplicate days, past-deadline preservation                           |
-| Placement round-trip       | `MONGODB_TEST_URI=... node --test tests/placement.integration.test.js`                  | 50-question diagnostic, hidden answers, one query, <500 ms response (NFR01)                                              |
-| Test detail round-trip     | `MONGODB_TEST_URI=... node --test tests/test-detail.integration.test.js`                | Published test by id, unpublished/unknown `404`, hidden nested answers, one query, <500 ms                               |
-| Diagnostic round-trip      | `MONGODB_TEST_URI=... node --test tests/diagnostic-evaluation.integration.test.js`      | `User.currentLevel` persistence, Core modifier, invalid-input non-mutation, 404 user                                     |
-| Task completion round-trip | `MONGODB_TEST_URI=... node --test tests/study-plan-task-completion.integration.test.js` | Embedded flag persistence, plan/roadmap percentages, idempotent retry, cross-student `404`                               |
+| Suite                         | Command                                                                                 | Scope                                                                                                                    |
+| ----------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Contract                      | `node --test "tests/*.test.js"`                                                         | Core scaling, CEFR borderline elevation, question validation, writing word limits, speaking timers, listening play limit |
+| Scaffold                      | `node --test "tests/*.test.js"`                                                         | Client/server paths, manifest scripts and engines, flat ESLint configs, Prettier Contract                                |
+| Server health                 | `node --test "tests/*.test.js"`                                                         | `GET /api/health` response Contract, 404 Contract, hidden Express fingerprint                                            |
+| Database                      | `node --test "tests/*.test.js"`                                                         | Pool defaults and bounds, URI scheme rejection, safe disconnect                                                          |
+| User schema                   | `node --test "tests/*.test.js"`                                                         | Required fields, email normalization, enums, indexes, password hashing, JSON redaction                                   |
+| Test schema                   | `node --test "tests/*.test.js"`                                                         | Embedded question arrays, enums, defaults, nested answer hiding, `type` + placement indexes                              |
+| Placement routes              | `node --test "tests/*.test.js"`                                                         | Student-only JWT guard, lecturer/admin `403`, and placement index Contract                                               |
+| Placement controller          | `node --test "tests/*.test.js"`                                                         | `404 Placement test not found` when no published diagnostic exists                                                       |
+| ObjectId validator            | `node --test "tests/*.test.js"`                                                         | 24-hex accept, string-only rule, rejection of instance/buffer/non-hex values                                             |
+| Test detail controller        | `node --test "tests/*.test.js"`                                                         | `400` without a DB read, published-only filter, answer exclusion, `404`, `200`, allowlist serializer                     |
+| Test detail routes            | `node --test "tests/*.test.js"`                                                         | Student-only guard, lecturer/admin `403`, invalid id `400`, `/placement` precedence                                      |
+| Diagnostic evaluation         | `node --test "tests/*.test.js"`                                                         | 0-50 validation, A1-C1 boundaries, Core modifier, lowest-skill resolution                                                |
+| Goal validator                | `node --test "tests/*.test.js"`                                                         | Deadline presence, certificate enum, cadence bounds, defaults                                                            |
+| Roadmap generator             | `node --test "tests/*.test.js"`                                                         | Date-only parsing, past/too-far rejection, remaining days, task rotation, caps                                           |
+| Goal routes                   | `node --test "tests/*.test.js"`                                                         | Student-only guard, lecturer/admin `403`, body and deadline `400` Contracts                                              |
+| Goal schema                   | `node --test "tests/*.test.js"`                                                         | Target certificate enum, deadline cast, defaults, unique student index                                                   |
+| StudyPlan schema              | `node --test "tests/*.test.js"`                                                         | Embedded daily tasks, skill enum, points/completion defaults, unique student/day index                                   |
+| Study plan progress           | `node --test "tests/*.test.js"`                                                         | One-decimal percent, clamping, zero totals, point totals, non-boolean completion flags                                   |
+| Study plan validator          | `node --test "tests/*.test.js"`                                                         | Boolean-only `isCompleted`, JSON-object body, 24-hex task id rule                                                        |
+| Study plan routes             | `node --test "tests/*.test.js"`                                                         | Student-only guard, lecturer/admin `403`, invalid id `400`, body `400` Contracts                                         |
+| Study plan schedule           | `node --test "tests/*.test.js"`                                                         | UTC day derivation, midnight rollover, clamping to stored days, invalid input                                            |
+| Study plan today              | `node --test "tests/*.test.js"`                                                         | `GET /api/study-plans/today` payload, `404` paths, cross-student isolation, stale-goal clamp                             |
+| Submission schema             | `node --test "tests/*.test.js"`                                                         | Required refs, status enum, score defaults/bounds, detail enums, word count, feedback cap, indexes, Contracts            |
+| Submission integration        | `node --test "tests/*.test.js"`                                                         | Opt-in detail persistence, null grading scores, lecturer score/feedback update                                           |
+| Auto-marking service          | `node --test "tests/*.test.js"`                                                         | Per-type marks, dropdown partial credit, 0-50 scaling, rounding, status, total score, determinism                        |
+| Submission validator          | `node --test "tests/*.test.js"`                                                         | Body ids, per-type answer shapes, duplicate/unknown questions, mediaUrl exclusivity, length caps                         |
+| Submission controller         | `node --test "tests/*.test.js"`                                                         | 400 before the DB, answer-key projection, published-only lookup, 404, persisted result, summary                          |
+| Submission routes             | `node --test "tests/*.test.js"`                                                         | Student-only guard, lecturer/admin `403`, body `400`, unknown test `404`                                                 |
+| Auth validator                | `node --test "tests/*.test.js"`                                                         | Register/login normalization, bounds, forced server fields                                                               |
+| JWT                           | `node --test "tests/*.test.js"`                                                         | Claims, expiry, tamper/wrong-secret rejection, secret strength                                                           |
+| Auth routes                   | `node --test "tests/*.test.js"`                                                         | 400 Contracts for register/login without a database                                                                      |
+| RBAC middleware               | `node --test "tests/*.test.js"`                                                         | Bearer parsing, invalid/expired tokens, role allow/deny, 401/403 Contracts, config errors                                |
+| NoSQL sanitizer               | `node --test "tests/*.test.js"`                                                         | Operator/dotted-key rewriting, nested body data, Express 5 compatibility, ordinary requests                              |
+| Error handler                 | `node --test "tests/*.test.js"`                                                         | JSON parse, payload limit, validation, cast, duplicate key, generic 500, headersSent, 404 Contract                       |
+| Auth validation               | `npm run test:ui`                                                                       | Any-email acceptance, password/student-ID bounds, role and consent rules                                                 |
+| Auth portal                   | `npm run test:ui`                                                                       | `/login`, `/register`, role mismatch, API calls, session save, redirects, sign out                                       |
+| Axios client                  | `npm run test:ui`                                                                       | Bearer request header, 401 session clearing, server/network `ApiError` normalization                                     |
+| Auth context                  | `npm run test:ui`                                                                       | Session restore, login/register, logout, role mismatch, 401 state reset                                                  |
+| Protected routes              | `npm run test:ui`                                                                       | Unauthenticated redirect, wrong-role denial, allowed roles, role-home redirect, access-denied recovery                   |
+| Placement ViewState           | `npm run test:ui`                                                                       | Answer keys, dropdown completion, navigation clamping, finish gate, saved-progress hydration                             |
+| Placement screen              | `npm run test:ui`                                                                       | Test load, question navigation, answer retention, unanswerable notice, finish summary, 404, retry                        |
+| Goal cadence                  | `npm run test:ui`                                                                       | UTC end-of-day parsing, remaining days, tasks per day, preview caps, API validation messages                             |
+| Goal ViewState                | `npm run test:ui`                                                                       | B1/B2 targets, deadline and minutes validation, submit/success/error transitions                                         |
+| Goal screen                   | `npm run test:ui`                                                                       | B1/B2 selector, deadline picker, blocked submissions, request body, roadmap summary, server details, captured answers    |
+| Dashboard ViewState           | `npm run test:ui`                                                                       | Payload validation, load/empty/error transitions, pending lock, confirmed task updates, day summary                      |
+| Dashboard screen              | `npm run test:ui`                                                                       | Today checklist, progress bars, PATCH toggle, pending lock, failed toggle, empty state, retry, completion message        |
+| Auth unit (TC01–TC03)         | `npm run test:jest`                                                                     | Register happy/validation/duplicate, login happy/negative, lecturer role guard                                           |
+| Auth API (TC01–TC03)          | `postman collection run postman/collections/aptis-go-auth`                              | Live registration, duplicate email, login, wrong password, unknown email; 11 assertions                                  |
+| Auth round-trip               | `MONGODB_TEST_URI=... node --test tests/auth.integration.test.js`                       | Register 201, role forcing, bcrypt, duplicate 409, login 200/401, token claims                                           |
+| Mongo round-trip              | `MONGODB_TEST_URI=... node --test tests/user-repository.integration.test.js`            | Real MongoDB save, bcrypt hash, `UNTESTED` default, duplicate-email rejection                                            |
+| Test round-trip               | `MONGODB_TEST_URI=... node --test tests/test-repository.integration.test.js`            | Default read omits embedded answers; explicit projection returns them for grading                                        |
+| Goal/plan round-trip          | `MONGODB_TEST_URI=... node --test tests/goal-study-plan.integration.test.js`            | Unique goal per student; embedded task defaults and completion persistence                                               |
+| Goal roadmap round-trip       | `MONGODB_TEST_URI=... node --test tests/goal-roadmap.integration.test.js`               | Goal upsert, remaining-day plans, task rotation, no duplicate days, past-deadline preservation                           |
+| Placement round-trip          | `MONGODB_TEST_URI=... node --test tests/placement.integration.test.js`                  | 50-question diagnostic, hidden answers, one query, <500 ms response (NFR01)                                              |
+| Test detail round-trip        | `MONGODB_TEST_URI=... node --test tests/test-detail.integration.test.js`                | Published test by id, unpublished/unknown `404`, hidden nested answers, one query, <500 ms                               |
+| Submission marking round-trip | `MONGODB_TEST_URI=... node --test tests/submission-marking.integration.test.js`         | Mixed/objective attempts, stored details, deterministic retakes, one query, <500 ms (FR04/NFR01)                         |
+| Diagnostic round-trip         | `MONGODB_TEST_URI=... node --test tests/diagnostic-evaluation.integration.test.js`      | `User.currentLevel` persistence, Core modifier, invalid-input non-mutation, 404 user                                     |
+| Task completion round-trip    | `MONGODB_TEST_URI=... node --test tests/study-plan-task-completion.integration.test.js` | Embedded flag persistence, plan/roadmap percentages, idempotent retry, cross-student `404`                               |
 
 TDD is mandatory: write the failing test first, confirm the failure, implement,
 then re-run. Do not weaken a test to make a suite pass.
@@ -1064,6 +1167,7 @@ gitGraph
 | `design-log/#0019-student-dashboard-today-roadmap.md`       | AG-208 today dashboard read and checklist           |
 | `design-log/#0020-submission-schema.md`                     | AG-301 submission details, scores, and status       |
 | `design-log/#0021-test-detail-endpoint.md`                  | AG-302 single-test delivery and hidden answers      |
+| `design-log/#0022-submission-auto-marking.md`               | AG-303 deterministic R/L/G marking and scores       |
 
 ## Engineering rules
 
@@ -1099,6 +1203,7 @@ gitGraph
 - [x] AG-208 - Today's study roadmap dashboard with derived progress
 - [x] AG-301 - Submission schema with details, hybrid scores, and status
 - [x] AG-302 - Single-test delivery with answer keys hidden
+- [x] AG-303 - Deterministic auto-marking for Core, Reading, and Listening
 - [ ] Sprint 2 - Express API and Mongoose models per ADS/DDS
 - [ ] Sprint 3 — Student SPA: placement, goals, study plan
 - [ ] Sprint 4 — Lecturer workspace and hybrid grading pipeline
