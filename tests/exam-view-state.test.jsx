@@ -9,6 +9,7 @@ import {
   INCOMPLETE_TEST_MESSAGE,
   buildSubmissionPayload,
   countAnsweredQuestions,
+  countFlaggedQuestions,
   countWords,
   countdownTone,
   createExamViewState,
@@ -16,8 +17,11 @@ import {
   hydrateExamViewState,
   initialSentenceOrder,
   isExpired,
+  isQuestionFlagged,
   moveSentence,
+  questionStatuses,
   remainingSeconds,
+  toggleQuestionFlag,
   withDropdownAnswer,
   withEssayText,
   withExamError,
@@ -63,12 +67,13 @@ afterEach(() => {
 });
 
 describe('ExamViewState', () => {
-  it('starts loading with no test, answers, or deadline', () => {
+  it('starts loading with no test, answers, flags, or deadline', () => {
     expect(createExamViewState()).toEqual({
       version: 1,
       status: 'loading',
       test: null,
       answers: {},
+      flags: {},
       startedAt: null,
       expiresAt: null,
       autoSubmitted: false,
@@ -241,6 +246,101 @@ describe('ExamViewState', () => {
     expect(countAnsweredQuestions(viewState)).toBe(5);
   });
 
+  it('toggles a question flag on and off', () => {
+    let viewState = readyState();
+
+    expect(viewState.flags).toEqual({});
+    expect(isQuestionFlagged(viewState, 'e1')).toBe(false);
+    expect(countFlaggedQuestions(viewState)).toBe(0);
+
+    viewState = toggleQuestionFlag(viewState, 'e1');
+    expect(viewState.flags).toEqual({ e1: true });
+    expect(isQuestionFlagged(viewState, 'e1')).toBe(true);
+    expect(isQuestionFlagged(viewState, 'e2')).toBe(false);
+    expect(countFlaggedQuestions(viewState)).toBe(1);
+
+    viewState = toggleQuestionFlag(viewState, 'e5');
+    expect(countFlaggedQuestions(viewState)).toBe(2);
+
+    viewState = toggleQuestionFlag(viewState, 'e1');
+    expect(viewState.flags).toEqual({ e5: true });
+    expect(countFlaggedQuestions(viewState)).toBe(1);
+  });
+
+  it('ignores flag toggles that cannot apply', () => {
+    const ready = readyState();
+    const submitting = withExamSubmitting(ready);
+
+    expect(toggleQuestionFlag(ready, 'ghost')).toBe(ready);
+    expect(toggleQuestionFlag(ready, '')).toBe(ready);
+    expect(toggleQuestionFlag(ready, undefined)).toBe(ready);
+    expect(toggleQuestionFlag(submitting, 'e1')).toBe(submitting);
+    expect(isQuestionFlagged(createExamViewState(), 'e1')).toBe(false);
+    expect(countFlaggedQuestions(createExamViewState())).toBe(0);
+  });
+
+  it('lists every question with its number, state, and flag', () => {
+    let viewState = withOptionAnswer(readyState(), 'e1', 1);
+    viewState = toggleQuestionFlag(viewState, 'e1');
+    viewState = toggleQuestionFlag(viewState, 'e5');
+
+    const statuses = questionStatuses(viewState);
+
+    expect(statuses).toHaveLength(6);
+    expect(statuses[0]).toEqual({
+      questionId: 'e1',
+      number: 1,
+      skill: 'core',
+      part: 1,
+      answered: true,
+      flagged: true,
+    });
+    expect(statuses[1]).toMatchObject({
+      questionId: 'e2',
+      number: 2,
+      skill: 'reading',
+      answered: false,
+      flagged: false,
+    });
+    expect(statuses[4]).toMatchObject({
+      questionId: 'e5',
+      number: 5,
+      answered: false,
+      flagged: true,
+    });
+    expect(statuses[5]).toMatchObject({ questionId: 'e6', number: 6, answered: false });
+    expect(questionStatuses(createExamViewState())).toEqual([]);
+  });
+
+  it('reports an untouched sentence order as unanswered in the palette', () => {
+    let viewState = readyState();
+
+    expect(questionStatuses(viewState)[2]).toMatchObject({ questionId: 'e3', answered: false });
+
+    viewState = moveSentence(viewState, 'e3', 1, 'down');
+
+    expect(questionStatuses(viewState)[2]).toMatchObject({ questionId: 'e3', answered: true });
+  });
+
+  it('counts only flags that belong to the loaded test', () => {
+    const viewState = { ...readyState(), flags: { e1: true, 'ghost-question': true } };
+
+    expect(isQuestionFlagged(viewState, 'ghost-question')).toBe(false);
+    expect(countFlaggedQuestions(viewState)).toBe(1);
+    expect(toggleQuestionFlag(viewState, 'ghost-question')).toBe(viewState);
+  });
+
+  it('keeps flags through submission transitions and clears them for a new attempt', () => {
+    const flagged = toggleQuestionFlag(readyState(), 'e1');
+    const submitting = withExamSubmitting(flagged);
+    const submitted = withExamSubmitted(submitting, { status: 'completed' }, { now: NOW });
+    const failed = withSubmissionError(withExamSubmitting(flagged), { message: 'Offline' });
+
+    expect(submitted.flags).toEqual({ e1: true });
+    expect(failed.flags).toEqual({ e1: true });
+    expect(withExamTest(createExamViewState(), EXAM_TEST, NOW).flags).toEqual({});
+  });
+
   it('builds one answer per question, sending null for anything unanswered', () => {
     expect(buildSubmissionPayload(readyState())).toEqual({
       testId: 'test-exam-1',
@@ -402,6 +502,44 @@ describe('ExamViewState', () => {
     expect(viewState.answers).toEqual({ e1: 1 });
   });
 
+  it('restores flags for this test and drops unknown ones', () => {
+    const saved = {
+      version: 1,
+      testId: EXAM_TEST.id,
+      startedAt: '2026-11-23T08:50:00.000Z',
+      expiresAt: '2026-11-23T09:50:00.000Z',
+      answers: { e1: 1 },
+      flags: { e3: true, 'ghost-question': true, e5: 'yes' },
+      submittedAt: null,
+      autoSubmitted: false,
+      result: null,
+    };
+
+    const viewState = hydrateExamViewState(saved, EXAM_TEST, NOW);
+
+    expect(viewState.flags).toEqual({ e3: true });
+    expect(isQuestionFlagged(viewState, 'e3')).toBe(true);
+  });
+
+  it('hydrates a record written before flags existed', () => {
+    const saved = {
+      version: 1,
+      testId: EXAM_TEST.id,
+      startedAt: '2026-11-23T08:50:00.000Z',
+      expiresAt: '2026-11-23T09:50:00.000Z',
+      answers: { e1: 2 },
+      submittedAt: null,
+      autoSubmitted: false,
+      result: null,
+    };
+
+    const viewState = hydrateExamViewState(saved, EXAM_TEST, NOW);
+
+    expect(viewState.status).toBe('ready');
+    expect(viewState.answers).toEqual({ e1: 2 });
+    expect(viewState.flags).toEqual({});
+  });
+
   it('restores a submitted attempt instead of restarting it', () => {
     const saved = {
       version: 1,
@@ -434,7 +572,36 @@ describe('Exam progress storage', () => {
     expect(saved.testId).toBe(EXAM_TEST.id);
     expect(saved.expiresAt).toBe('2026-11-23T10:00:00.000Z');
     expect(saved.answers.e1).toBe(1);
+    expect(saved.flags).toEqual({});
     expect(saved.updatedAt).toBe('2026-11-23T09:00:00.000Z');
+  });
+
+  it('persists question flags with the attempt', () => {
+    saveExamProgress(toggleQuestionFlag(answeredState(), 'e3'), NOW);
+
+    expect(readExamProgress(EXAM_TEST.id).flags).toEqual({ e3: true });
+  });
+
+  it('accepts a stored record that predates flags', () => {
+    const legacy = {
+      version: 1,
+      testId: EXAM_TEST.id,
+      startedAt: '2026-11-23T08:50:00.000Z',
+      expiresAt: '2026-11-23T09:50:00.000Z',
+      answers: { e1: 2 },
+      submittedAt: null,
+      autoSubmitted: false,
+      result: null,
+      updatedAt: '2026-11-23T08:51:00.000Z',
+    };
+
+    sessionStorage.setItem(examProgressKey(EXAM_TEST.id), JSON.stringify(legacy));
+
+    const saved = readExamProgress(EXAM_TEST.id);
+
+    expect(saved).not.toBeNull();
+    expect(saved.answers).toEqual({ e1: 2 });
+    expect(saved.flags).toBeUndefined();
   });
 
   it('does not restore another test or a corrupt record', () => {

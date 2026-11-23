@@ -32,6 +32,7 @@ const QUESTION_TYPES = Object.freeze([
  * @property {'loading'|'ready'|'submitting'|'submitted'|'error'} status
  * @property {object|null} test
  * @property {Record<string, unknown>} answers
+ * @property {Record<string, true>} flags
  * @property {string|null} startedAt
  * @property {string|null} expiresAt
  * @property {boolean} autoSubmitted
@@ -124,6 +125,7 @@ export function createExamViewState() {
     status: EXAM_STATUS.LOADING,
     test: null,
     answers: {},
+    flags: {},
     startedAt: null,
     expiresAt: null,
     autoSubmitted: false,
@@ -146,6 +148,7 @@ export function withExamTest(viewState, test, now = new Date()) {
       status: EXAM_STATUS.ERROR,
       test: null,
       answers: {},
+      flags: {},
       startedAt: null,
       expiresAt: null,
       autoSubmitted: false,
@@ -163,6 +166,7 @@ export function withExamTest(viewState, test, now = new Date()) {
     status: EXAM_STATUS.READY,
     test,
     answers: {},
+    flags: {},
     startedAt,
     expiresAt,
     autoSubmitted: false,
@@ -183,6 +187,7 @@ export function withExamError(viewState, error = {}) {
     status: EXAM_STATUS.ERROR,
     test: null,
     answers: {},
+    flags: {},
     startedAt: null,
     expiresAt: null,
     autoSubmitted: false,
@@ -557,6 +562,89 @@ export function countAnsweredQuestions(viewState) {
 
 /**
  * @param {ExamViewState} viewState
+ * @param {unknown} questionId
+ * @returns {boolean}
+ */
+function hasQuestion(viewState, questionId) {
+  return (
+    typeof questionId === 'string' &&
+    questionId.length > 0 &&
+    (viewState.test?.questions ?? []).some((question) => question.id === questionId)
+  );
+}
+
+/**
+ * @param {ExamViewState} viewState
+ * @param {string} questionId
+ * @returns {boolean}
+ */
+export function isQuestionFlagged(viewState, questionId) {
+  return hasQuestion(viewState, questionId) && viewState.flags?.[questionId] === true;
+}
+
+/**
+ * Flag state is a local study aid: it never leaves the browser and never changes
+ * the submission payload.
+ *
+ * @param {ExamViewState} viewState
+ * @param {string} questionId
+ * @returns {ExamViewState}
+ */
+export function toggleQuestionFlag(viewState, questionId) {
+  if (viewState.status !== EXAM_STATUS.READY || !hasQuestion(viewState, questionId)) {
+    return viewState;
+  }
+
+  const flags = { ...(viewState.flags ?? {}) };
+
+  if (flags[questionId] === true) {
+    delete flags[questionId];
+  } else {
+    flags[questionId] = true;
+  }
+
+  return { ...viewState, flags };
+}
+
+/**
+ * @param {ExamViewState} viewState
+ * @returns {number}
+ */
+export function countFlaggedQuestions(viewState) {
+  return (viewState.test?.questions ?? []).filter((question) =>
+    isQuestionFlagged(viewState, question.id)
+  ).length;
+}
+
+/**
+ * One entry per stored question, in stored order. `answered` uses the same rule
+ * as the submission payload, so the palette cannot disagree with the server's
+ * `answeredCount`.
+ *
+ * @typedef {object} ExamQuestionStatus
+ * @property {string} questionId
+ * @property {number} number
+ * @property {string} skill
+ * @property {number} part
+ * @property {boolean} answered
+ * @property {boolean} flagged
+ *
+ * @param {ExamViewState} viewState
+ * @returns {ExamQuestionStatus[]}
+ */
+export function questionStatuses(viewState) {
+  return (viewState.test?.questions ?? []).map((question, index) => ({
+    questionId: String(question.id),
+    number: index + 1,
+    skill: question.skill,
+    part: question.part,
+    answered: answerFor(question, viewState.answers[question.id]) !== null,
+    flagged: isQuestionFlagged(viewState, question.id),
+  }));
+}
+
+/**
+ * @param {ExamViewState} viewState
  * @returns {{ testId: string, answers: Array<{ questionId: string, submittedAnswer: unknown }> }|null}
  */
 export function buildSubmissionPayload(viewState) {
@@ -719,6 +807,31 @@ function sanitizeAnswers(test, raw) {
 }
 
 /**
+ * Old records predate flags, so a missing value is simply empty. Only ids that
+ * exist in the loaded test and are explicitly `true` survive.
+ *
+ * @param {object} test
+ * @param {unknown} raw
+ * @returns {Record<string, true>}
+ */
+function sanitizeFlags(test, raw) {
+  if (!isPlainObject(raw)) {
+    return {};
+  }
+
+  const known = new Set((test.questions ?? []).map((question) => String(question.id)));
+  const flags = {};
+
+  for (const [questionId, value] of Object.entries(raw)) {
+    if (known.has(questionId) && value === true) {
+      flags[questionId] = true;
+    }
+  }
+
+  return flags;
+}
+
+/**
  * @param {unknown} saved
  * @param {object} test
  * @param {Date} [now]
@@ -737,6 +850,7 @@ export function hydrateExamViewState(saved, test, now = new Date()) {
   }
 
   const answers = sanitizeAnswers(test, saved.answers);
+  const flags = sanitizeFlags(test, saved.flags);
   const startedAt = isIsoString(saved.startedAt) ? saved.startedAt : fresh.startedAt;
   const expiresAt = isIsoString(saved.expiresAt) ? saved.expiresAt : fresh.expiresAt;
   const submittedAt = isIsoString(saved.submittedAt) ? saved.submittedAt : null;
@@ -747,6 +861,7 @@ export function hydrateExamViewState(saved, test, now = new Date()) {
       ...fresh,
       status: EXAM_STATUS.SUBMITTED,
       answers,
+      flags,
       startedAt,
       expiresAt,
       submittedAt,
@@ -758,6 +873,7 @@ export function hydrateExamViewState(saved, test, now = new Date()) {
   return {
     ...fresh,
     answers,
+    flags,
     startedAt,
     expiresAt,
   };

@@ -8,7 +8,7 @@ APTIS GO combines instant auto-marking for receptive skills with lecturer rubric
 review for productive skills, then resolves a CEFR profile using the official
 Aptis 0–200 scale and the Core module as a borderline modifier.
 
-> **Status: Sprint 3 - AG-304 timed mock exam screen complete.**
+> **Status: Sprint 3 - AG-305 question palette complete.**
 > The repository now contains two decoupled applications: `client/` (React 19 +
 > Vite 8 + TailwindCSS 4) and `server/` (Node.js + Express 5), gated by ESLint 10
 > and Prettier 3. The API connects to MongoDB Atlas through a pooled Mongoose
@@ -33,10 +33,11 @@ Aptis 0–200 scale and the Core module as a borderline modifier.
 > derived day and roadmap progress. The student SPA now serves `/placement` (a
 > question-by-question diagnostic runner), `/goals` (B1/B2 target, deadline
 > picker, and cadence preview), `/dashboard` (today's checklist and progress
-> bars), and `/tests/:id` (a timed mock exam runner with a countdown, automatic
-> submission at zero, and the server's marked summary), driven by explicit
-> `PlacementViewState`, `GoalViewState`, `DashboardViewState`, and
-> `ExamViewState` objects. The new `Submission` model stores one document
+> bars), and `/tests/:id` (a timed mock exam runner with a question palette, a
+> countdown, automatic submission at zero, and the server's marked summary),
+> driven by explicit `PlacementViewState`, `GoalViewState`,
+> `DashboardViewState`, and `ExamViewState` objects. The new `Submission` model
+> stores one document
 > per attempt: a `details` array of per-question evaluations, `autoScore`,
 > `manualScore`, and `totalScore`, plus an
 > `in_progress | pending_review | completed` status. Subjective scores stay
@@ -677,6 +678,18 @@ a deterministic shuffle seeded by the question id with fixed sentences pinned,
 so the stored answer key is never displayed and a refresh cannot reroll the
 order.
 
+A question palette sits between the countdown and the paper. It shows
+`N answered · M unanswered · K flagged` plus one button per item, numbered in
+stored order, with an accessible name that states the skill, part, and state
+(for example `Question 3, reading part 2, unanswered, flagged`). Clicking a chip
+scrolls that card into view and moves focus to it, and the last target carries
+`aria-current`. Answered/unanswered comes from the same rule as the submit
+payload, so an untouched sentence-order item counts as unanswered. Each card has
+a `Flag question N` toggle (`aria-pressed`) for "come back to this"; flags can
+coexist with answers, are stored with the attempt under `flags`, and are never
+sent to the API. The palette is hidden on the result panel and disabled while a
+submission is in flight.
+
 ## Security and errors
 
 `express-mongo-sanitize` runs after `express.json()` and before routes. It
@@ -742,6 +755,7 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── src/exam/api.js                        # GET /api/tests/:id and POST /api/submissions
 │   ├── src/exam/examProgressStorage.js        # sessionStorage answers + deadline mirror
 │   ├── src/exam/examViewState.js              # explicit ExamViewState, timer, payload
+│   ├── src/exam/QuestionPalette.jsx           # answered/unanswered/flagged palette and jump
 │   ├── src/goals/GoalsPage.jsx      # /goals target, deadline, and cadence form
 │   ├── src/goals/api.js             # POST /api/goals wrapper
 │   ├── src/goals/goalCadence.js     # remaining days, tasks per day, deadline rules
@@ -818,7 +832,8 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── #0020-submission-schema.md
 │   ├── #0021-test-detail-endpoint.md
 │   ├── #0022-submission-auto-marking.md
-│   └── #0023-timed-mock-exam-screen.md
+│   ├── #0023-timed-mock-exam-screen.md
+│   └── #0024-exam-question-palette.md
 ├── diagrams/                        # Exported architecture diagrams (PNG)
 ├── docx/                            # SRS, SAD, DDS, ADS, CSG, BRD, STP
 ├── postman/
@@ -874,8 +889,8 @@ Frontend test files:
 - `tests/auth-portal.test.jsx` — route, role, API, session, and consent behaviour
 - `tests/auth-context.test.jsx` — session restore, login/register, logout, and 401 state
 - `tests/axios-client.test.jsx` — Bearer header and error normalization
-- `tests/exam-screen.test.jsx` — load, answer, submit, auto-submit, deadline restore, role guard
-- `tests/exam-view-state.test.jsx` — `ExamViewState`, timer helpers, payload, shuffle, storage
+- `tests/exam-screen.test.jsx` — load, palette, flags, jump/focus, submit, auto-submit, restore
+- `tests/exam-view-state.test.jsx` — `ExamViewState`, timer, payload, shuffle, flags, storage
 - `tests/goal-cadence.test.jsx` — deadline parsing, remaining days, and task caps
 - `tests/goal-screen.test.jsx` — B1/B2 form, validation, request body, roadmap summary
 - `tests/goal-view-state.test.jsx` — `GoalViewState` transitions and validation
@@ -1116,8 +1131,8 @@ built with Vite for production.
 | Goal screen                   | `npm run test:ui`                                                                       | B1/B2 selector, deadline picker, blocked submissions, request body, roadmap summary, server details, captured answers    |
 | Dashboard ViewState           | `npm run test:ui`                                                                       | Payload validation, load/empty/error transitions, pending lock, confirmed task updates, day summary                      |
 | Dashboard screen              | `npm run test:ui`                                                                       | Today checklist, progress bars, PATCH toggle, pending lock, failed toggle, empty state, retry, completion message        |
-| Exam ViewState                | `npm run test:ui`                                                                       | Payload validation, deadline math, countdown formatting, seeded shuffle, payload builder, hydrating answers and results  |
-| Exam screen                   | `npm run test:ui`                                                                       | Load + countdown, answer capture, exact POST body, auto-submit once, refresh restore, retry, lecturer guard              |
+| Exam ViewState                | `npm run test:ui`                                                                       | Payload validation, deadline math, countdown formatting, seeded shuffle, flags, palette statuses, storage                |
+| Exam screen                   | `npm run test:ui`                                                                       | Load + countdown, palette totals, flag toggles, jump/focus, exact POST body, auto-submit once, restore                   |
 | Auth unit (TC01–TC03)         | `npm run test:jest`                                                                     | Register happy/validation/duplicate, login happy/negative, lecturer role guard                                           |
 | Auth API (TC01–TC03)          | `postman collection run postman/collections/aptis-go-auth`                              | Live registration, duplicate email, login, wrong password, unknown email; 11 assertions                                  |
 | Auth round-trip               | `MONGODB_TEST_URI=... node --test tests/auth.integration.test.js`                       | Register 201, role forcing, bcrypt, duplicate 409, login 200/401, token claims                                           |
@@ -1208,6 +1223,7 @@ gitGraph
 | `design-log/#0021-test-detail-endpoint.md`                  | AG-302 single-test delivery and hidden answers      |
 | `design-log/#0022-submission-auto-marking.md`               | AG-303 deterministic R/L/G marking and scores       |
 | `design-log/#0023-timed-mock-exam-screen.md`                | AG-304 timed mock exam, countdown, and auto-submit  |
+| `design-log/#0024-exam-question-palette.md`                 | AG-305 palette states, flags, and question jumping  |
 
 ## Engineering rules
 
@@ -1245,6 +1261,7 @@ gitGraph
 - [x] AG-302 - Single-test delivery with answer keys hidden
 - [x] AG-303 - Deterministic auto-marking for Core, Reading, and Listening
 - [x] AG-304 - Timed mock exam screen with countdown and auto-submit
+- [x] AG-305 - Interactive question palette with answered, unanswered, and flagged states
 - [ ] Sprint 2 - Express API and Mongoose models per ADS/DDS
 - [ ] Sprint 3 — Student SPA: placement, goals, study plan
 - [ ] Sprint 4 — Lecturer workspace and hybrid grading pipeline
