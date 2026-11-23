@@ -8,7 +8,7 @@ APTIS GO combines instant auto-marking for receptive skills with lecturer rubric
 review for productive skills, then resolves a CEFR profile using the official
 Aptis 0–200 scale and the Core module as a borderline modifier.
 
-> **Status: Sprint 3 - AG-303 auto-marking engine complete.**
+> **Status: Sprint 3 - AG-304 timed mock exam screen complete.**
 > The repository now contains two decoupled applications: `client/` (React 19 +
 > Vite 8 + TailwindCSS 4) and `server/` (Node.js + Express 5), gated by ESLint 10
 > and Prettier 3. The API connects to MongoDB Atlas through a pooled Mongoose
@@ -32,9 +32,11 @@ Aptis 0–200 scale and the Core module as a borderline modifier.
 > resolves the current UTC day of that roadmap and returns the day's tasks with
 > derived day and roadmap progress. The student SPA now serves `/placement` (a
 > question-by-question diagnostic runner), `/goals` (B1/B2 target, deadline
-> picker, and cadence preview), and `/dashboard` (today's checklist and progress
-> bars), driven by explicit `PlacementViewState`, `GoalViewState`, and
-> `DashboardViewState` objects. The new `Submission` model stores one document
+> picker, and cadence preview), `/dashboard` (today's checklist and progress
+> bars), and `/tests/:id` (a timed mock exam runner with a countdown, automatic
+> submission at zero, and the server's marked summary), driven by explicit
+> `PlacementViewState`, `GoalViewState`, `DashboardViewState`, and
+> `ExamViewState` objects. The new `Submission` model stores one document
 > per attempt: a `details` array of per-question evaluations, `autoScore`,
 > `manualScore`, and `totalScore`, plus an
 > `in_progress | pending_review | completed` status. Subjective scores stay
@@ -209,6 +211,10 @@ returns the user to `/login`.
 | `/login`        | Public; authenticated users go to `/`        |
 | `/register`     | Public; authenticated users go to `/`        |
 | `/student`      | `ProtectedRoute allowedRoles={['student']}`  |
+| `/placement`    | `ProtectedRoute allowedRoles={['student']}`  |
+| `/goals`        | `ProtectedRoute allowedRoles={['student']}`  |
+| `/dashboard`    | `ProtectedRoute allowedRoles={['student']}`  |
+| `/tests/:id`    | `ProtectedRoute allowedRoles={['student']}`  |
 | `/lecturer`     | `ProtectedRoute allowedRoles={['lecturer']}` |
 | `/admin`        | `ProtectedRoute allowedRoles={['admin']}`    |
 | `/unauthorized` | Explains a role mismatch without logging out |
@@ -611,9 +617,11 @@ is the end of a UTC day.
 | `/placement` | `ProtectedRoute` (student only) | Diagnostic runner backed by `GET /api/tests/placement` |
 | `/goals`     | `ProtectedRoute` (student only) | B1/B2 target, deadline picker, and roadmap generation  |
 | `/dashboard` | `ProtectedRoute` (student only) | Today's checklist and progress bars                    |
+| `/tests/:id` | `ProtectedRoute` (student only) | Timed mock exam with countdown and auto-submit         |
 
-All three screens use the shared `StudentShell` header, and the student workspace
-links to them as Step 1, Step 2, and Step 3.
+All four screens use the shared `StudentShell` header, and the student workspace
+links to the first three as Step 1, Step 2, and Step 3. `/tests/:id` has no list
+endpoint yet, so it opens from a direct URL.
 
 `/placement` renders one question at a time for `mcq_single`, `dropdown_match`,
 and `dropdown_cloze` items, keeps answers in an explicit `PlacementViewState`,
@@ -647,6 +655,27 @@ the browser never calculates percentages. A failed toggle keeps the checklist
 usable and shows the API message, while a missing goal renders an empty state
 with a link to `/goals`. The dashboard does not poll or cache; every visit reads
 the current UTC day.
+
+`/tests/:id` loads one published test with `GET /api/tests/:id` into an explicit
+`ExamViewState` and renders the whole paper in stored order. The countdown is
+derived from the server's `durationMinutes`: `expiresAt` is stored once, and
+`remainingSeconds` recomputes `max(0, ceil((expiresAt - now) / 1000))` on every
+render, so a backgrounded tab catches up instead of drifting. Answers and the
+deadline are mirrored to `sessionStorage` under
+`aptis-go:exam-progress:<testId>`; a refresh restores both, which means a used
+minute stays used. At zero the screen posts automatically, exactly once, and the
+guards are a `ready`-only timeout handler, a disabled button while submitting,
+and an in-flight ref.
+
+Submitting sends `POST /api/submissions` with one entry per question in stored
+order, including `submittedAnswer: null` for skipped questions, so the API's
+denominator and its non-empty `answers` rule both hold. The screen then shows
+only the server summary: `status`, `autoScore` out of 150, the three automated
+skill scores, `totalScore` when it exists, and the answered count. Writing and
+Speaking read "Awaiting review" rather than `0`. Sentence-order tasks start from
+a deterministic shuffle seeded by the question id with fixed sentences pinned,
+so the stored answer key is never displayed and a refresh cannot reroll the
+order.
 
 ## Security and errors
 
@@ -708,6 +737,11 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── src/dashboard/TaskChecklist.jsx        # Accessible checkboxes with pending lock
 │   ├── src/dashboard/api.js                   # GET /today and PATCH task wrappers
 │   ├── src/dashboard/dashboardViewState.js    # explicit DashboardViewState
+│   ├── src/exam/ExamQuestionCard.jsx          # every question type, answer capture
+│   ├── src/exam/MockExamPage.jsx              # /tests/:id timer, auto-submit, result
+│   ├── src/exam/api.js                        # GET /api/tests/:id and POST /api/submissions
+│   ├── src/exam/examProgressStorage.js        # sessionStorage answers + deadline mirror
+│   ├── src/exam/examViewState.js              # explicit ExamViewState, timer, payload
 │   ├── src/goals/GoalsPage.jsx      # /goals target, deadline, and cadence form
 │   ├── src/goals/api.js             # POST /api/goals wrapper
 │   ├── src/goals/goalCadence.js     # remaining days, tasks per day, deadline rules
@@ -783,7 +817,8 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── #0019-student-dashboard-today-roadmap.md
 │   ├── #0020-submission-schema.md
 │   ├── #0021-test-detail-endpoint.md
-│   └── #0022-submission-auto-marking.md
+│   ├── #0022-submission-auto-marking.md
+│   └── #0023-timed-mock-exam-screen.md
 ├── diagrams/                        # Exported architecture diagrams (PNG)
 ├── docx/                            # SRS, SAD, DDS, ADS, CSG, BRD, STP
 ├── postman/
@@ -839,13 +874,15 @@ Frontend test files:
 - `tests/auth-portal.test.jsx` — route, role, API, session, and consent behaviour
 - `tests/auth-context.test.jsx` — session restore, login/register, logout, and 401 state
 - `tests/axios-client.test.jsx` — Bearer header and error normalization
+- `tests/exam-screen.test.jsx` — load, answer, submit, auto-submit, deadline restore, role guard
+- `tests/exam-view-state.test.jsx` — `ExamViewState`, timer helpers, payload, shuffle, storage
 - `tests/goal-cadence.test.jsx` — deadline parsing, remaining days, and task caps
 - `tests/goal-screen.test.jsx` — B1/B2 form, validation, request body, roadmap summary
 - `tests/goal-view-state.test.jsx` — `GoalViewState` transitions and validation
 - `tests/placement-screen.test.jsx` — runner loading, navigation, finish gate, retry
 - `tests/placement-view-state.test.jsx` — `PlacementViewState` answers and completion
 - `tests/protected-route.test.jsx` — unauthenticated, wrong-role, and allowed-role routes
-- `tests/screen-fixtures.jsx` — shared session and diagnostic fixture
+- `tests/screen-fixtures.jsx` — shared session, diagnostic, exam, and submission fixtures
 - `tests/setup.js` — Testing Library cleanup and matchers
 - `vitest.config.mjs` — jsdom, React/Axios dedupe, and `tests/**/*.test.jsx` discovery
 
@@ -1079,6 +1116,8 @@ built with Vite for production.
 | Goal screen                   | `npm run test:ui`                                                                       | B1/B2 selector, deadline picker, blocked submissions, request body, roadmap summary, server details, captured answers    |
 | Dashboard ViewState           | `npm run test:ui`                                                                       | Payload validation, load/empty/error transitions, pending lock, confirmed task updates, day summary                      |
 | Dashboard screen              | `npm run test:ui`                                                                       | Today checklist, progress bars, PATCH toggle, pending lock, failed toggle, empty state, retry, completion message        |
+| Exam ViewState                | `npm run test:ui`                                                                       | Payload validation, deadline math, countdown formatting, seeded shuffle, payload builder, hydrating answers and results  |
+| Exam screen                   | `npm run test:ui`                                                                       | Load + countdown, answer capture, exact POST body, auto-submit once, refresh restore, retry, lecturer guard              |
 | Auth unit (TC01–TC03)         | `npm run test:jest`                                                                     | Register happy/validation/duplicate, login happy/negative, lecturer role guard                                           |
 | Auth API (TC01–TC03)          | `postman collection run postman/collections/aptis-go-auth`                              | Live registration, duplicate email, login, wrong password, unknown email; 11 assertions                                  |
 | Auth round-trip               | `MONGODB_TEST_URI=... node --test tests/auth.integration.test.js`                       | Register 201, role forcing, bcrypt, duplicate 409, login 200/401, token claims                                           |
@@ -1168,6 +1207,7 @@ gitGraph
 | `design-log/#0020-submission-schema.md`                     | AG-301 submission details, scores, and status       |
 | `design-log/#0021-test-detail-endpoint.md`                  | AG-302 single-test delivery and hidden answers      |
 | `design-log/#0022-submission-auto-marking.md`               | AG-303 deterministic R/L/G marking and scores       |
+| `design-log/#0023-timed-mock-exam-screen.md`                | AG-304 timed mock exam, countdown, and auto-submit  |
 
 ## Engineering rules
 
@@ -1204,6 +1244,7 @@ gitGraph
 - [x] AG-301 - Submission schema with details, hybrid scores, and status
 - [x] AG-302 - Single-test delivery with answer keys hidden
 - [x] AG-303 - Deterministic auto-marking for Core, Reading, and Listening
+- [x] AG-304 - Timed mock exam screen with countdown and auto-submit
 - [ ] Sprint 2 - Express API and Mongoose models per ADS/DDS
 - [ ] Sprint 3 — Student SPA: placement, goals, study plan
 - [ ] Sprint 4 — Lecturer workspace and hybrid grading pipeline
