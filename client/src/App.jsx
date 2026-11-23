@@ -4,6 +4,7 @@ import AuthProvider from './auth/AuthProvider.jsx';
 import ProtectedRoute from './auth/ProtectedRoute.jsx';
 import { useAuth } from './auth/useAuth.js';
 import DashboardPage from './dashboard/DashboardPage.jsx';
+import MockExamPage from './exam/MockExamPage.jsx';
 import GoalsPage from './goals/GoalsPage.jsx';
 import AccessDeniedPage from './pages/AccessDeniedPage.jsx';
 import LoginPage from './pages/LoginPage.jsx';
@@ -58,6 +59,14 @@ export default function App() {
             element={
               <ProtectedRoute allowedRoles={['student']}>
                 <DashboardPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/tests/:id"
+            element={
+              <ProtectedRoute allowedRoles={['student']}>
+                <MockExamPage />
               </ProtectedRoute>
             }
           />
