@@ -2,15 +2,32 @@ import { countWords, sentenceOrderFor } from './examViewState.js';
 
 const DROPDOWN_TYPES = Object.freeze(['dropdown_match', 'dropdown_cloze']);
 
-function QuestionMeta({ question, index }) {
+function QuestionMeta({ question, index, flagged, disabled, onToggleFlag }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-2">
       <span className="rounded-full border border-teal-400/25 bg-teal-400/10 px-3 py-1 text-[11px] font-semibold tracking-[0.14em] text-teal-200 uppercase">
         Item {index + 1} · {question.skill} part {question.part}
       </span>
-      <span className="text-[11px] font-medium tracking-[0.14em] text-slate-500 uppercase">
-        {question.questionType}
-      </span>
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] font-medium tracking-[0.14em] text-slate-500 uppercase">
+          {question.questionType}
+        </span>
+        <button
+          type="button"
+          aria-pressed={flagged}
+          aria-label={`Flag question ${index + 1}`}
+          disabled={disabled}
+          onClick={onToggleFlag}
+          className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition focus-visible:ring-2 focus-visible:ring-amber-300/70 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40 ${
+            flagged
+              ? 'border-amber-300/60 bg-amber-300/15 text-amber-100'
+              : 'border-white/10 text-slate-400 hover:border-white/25 hover:text-slate-200'
+          }`}
+        >
+          <span aria-hidden="true">{flagged ? '⚑' : '⚐'}</span>
+          {flagged ? 'Flagged' : 'Flag'}
+        </button>
+      </div>
     </div>
   );
 }
@@ -213,12 +230,15 @@ export default function ExamQuestionCard({
   question,
   index,
   answer,
+  anchorId,
+  flagged = false,
   disabled = false,
   onOption,
   onDropdown,
   onSentenceMove,
   onFieldChange,
   onEssayChange,
+  onToggleFlag,
 }) {
   if (!question) {
     return null;
@@ -228,10 +248,18 @@ export default function ExamQuestionCard({
 
   return (
     <section
+      id={anchorId}
+      tabIndex={-1}
       aria-labelledby={promptId}
-      className="rounded-2xl border border-white/10 bg-slate-950/40 p-5"
+      className="rounded-2xl border border-white/10 bg-slate-950/40 p-5 transition focus:border-teal-400/40 focus:ring-2 focus:ring-teal-400/30 focus:outline-none"
     >
-      <QuestionMeta question={question} index={index} />
+      <QuestionMeta
+        question={question}
+        index={index}
+        flagged={flagged}
+        disabled={disabled}
+        onToggleFlag={onToggleFlag}
+      />
 
       {question.contextPassage ? (
         <p className="mt-4 rounded-xl border border-white/5 bg-white/[0.03] p-3 text-sm leading-6 text-slate-400">

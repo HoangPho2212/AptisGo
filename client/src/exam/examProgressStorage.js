@@ -11,6 +11,7 @@ const SAVABLE_STATUSES = Object.freeze(['ready', 'submitting', 'submitted']);
  * @property {string} startedAt
  * @property {string} expiresAt
  * @property {Record<string, unknown>} answers
+ * @property {Record<string, true>} [flags]
  * @property {string|null} submittedAt
  * @property {boolean} autoSubmitted
  * @property {object|null} result
@@ -42,6 +43,8 @@ function isValidProgress(value) {
     value.answers !== null &&
     typeof value.answers === 'object' &&
     !Array.isArray(value.answers) &&
+    (value.flags === undefined ||
+      (value.flags !== null && typeof value.flags === 'object' && !Array.isArray(value.flags))) &&
     (value.submittedAt === null || typeof value.submittedAt === 'string') &&
     typeof value.autoSubmitted === 'boolean' &&
     (value.result === null || (typeof value.result === 'object' && !Array.isArray(value.result))) &&
@@ -71,6 +74,7 @@ export function saveExamProgress(viewState, now = new Date()) {
     startedAt: viewState.startedAt,
     expiresAt: viewState.expiresAt,
     answers: viewState.answers,
+    flags: viewState.flags ?? {},
     submittedAt: viewState.submittedAt,
     autoSubmitted: viewState.autoSubmitted === true,
     result: viewState.result,

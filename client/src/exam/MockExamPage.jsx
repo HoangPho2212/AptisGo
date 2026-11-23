@@ -4,6 +4,7 @@ import { Link, Navigate, useParams } from 'react-router-dom';
 import StudentShell from '../app/StudentShell.jsx';
 import { useAuth } from '../auth/useAuth.js';
 import ExamQuestionCard from './ExamQuestionCard.jsx';
+import QuestionPalette from './QuestionPalette.jsx';
 import { fetchExamTest, submitAttempt } from './api.js';
 import { clearExamProgress, readExamProgress, saveExamProgress } from './examProgressStorage.js';
 import {
@@ -15,8 +16,11 @@ import {
   createExamViewState,
   formatCountdown,
   hydrateExamViewState,
+  isQuestionFlagged,
   moveSentence,
+  questionStatuses,
   remainingSeconds,
+  toggleQuestionFlag,
   withDropdownAnswer,
   withEssayText,
   withExamError,
@@ -213,6 +217,7 @@ export default function MockExamPage() {
   const { user } = useAuth();
   const [viewState, setViewState] = useState(createExamViewState);
   const [now, setNow] = useState(() => new Date());
+  const [activeQuestionId, setActiveQuestionId] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
   const inFlight = useRef(false);
   const autoSubmitFired = useRef(false);
@@ -225,6 +230,7 @@ export default function MockExamPage() {
     let active = true;
 
     autoSubmitFired.current = false;
+    setActiveQuestionId(null);
     setViewState(createExamViewState());
 
     fetchExamTest(id)
@@ -332,8 +338,25 @@ export default function MockExamPage() {
     clearExamProgress(test?.id);
     inFlight.current = false;
     autoSubmitFired.current = false;
+    setActiveQuestionId(null);
     setNow(new Date());
     setViewState(withExamTest(createExamViewState(), test));
+  }
+
+  function handlePaletteJump(questionId) {
+    setActiveQuestionId(questionId);
+
+    const section = document.getElementById(`exam-question-${questionId}`);
+
+    if (!section) {
+      return;
+    }
+
+    if (typeof section.scrollIntoView === 'function') {
+      section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    section.focus({ preventScroll: true });
   }
 
   return (
@@ -395,14 +418,26 @@ export default function MockExamPage() {
               <ResultPanel viewState={viewState} onNewAttempt={handleNewAttempt} />
             ) : (
               <>
+                <QuestionPalette
+                  statuses={questionStatuses(viewState)}
+                  activeQuestionId={activeQuestionId}
+                  onJump={handlePaletteJump}
+                  disabled={!isReady}
+                />
+
                 <div className="space-y-4">
                   {(test.questions ?? []).map((question, index) => (
                     <ExamQuestionCard
                       key={question.id}
                       question={question}
                       index={index}
+                      anchorId={`exam-question-${question.id}`}
                       answer={viewState.answers[question.id]}
+                      flagged={isQuestionFlagged(viewState, question.id)}
                       disabled={!isReady}
+                      onToggleFlag={() =>
+                        setViewState((current) => toggleQuestionFlag(current, question.id))
+                      }
                       onOption={(optionIndex) =>
                         setViewState((current) =>
                           withOptionAnswer(current, question.id, optionIndex)

@@ -111,6 +111,103 @@ describe('Timed mock exam screen', () => {
     expect(await screen.findByText(EXAM_TEST.title)).toBeInTheDocument();
   });
 
+  it('shows a question palette with answered, unanswered, and flagged totals', async () => {
+    serveExam();
+    const user = userEvent.setup();
+
+    renderAt(`/tests/${EXAM_TEST.id}`);
+    await screen.findByText(EXAM_TEST.title);
+
+    const palette = screen.getByRole('navigation', { name: /question palette/i });
+
+    expect(within(palette).getAllByRole('button')).toHaveLength(6);
+    expect(within(palette).getByText('0 answered · 6 unanswered · 0 flagged')).toBeInTheDocument();
+    expect(
+      within(palette).getByRole('button', { name: 'Question 1, core part 1, unanswered' })
+    ).toBeInTheDocument();
+    expect(
+      within(palette).getByRole('button', { name: 'Question 5, writing part 4, unanswered' })
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('radio', { name: 'goes' }));
+
+    expect(
+      within(palette).getByRole('button', { name: 'Question 1, core part 1, answered' })
+    ).toBeInTheDocument();
+    expect(within(palette).getByText('1 answered · 5 unanswered · 0 flagged')).toBeInTheDocument();
+  });
+
+  it('flags and unflags an item from its card', async () => {
+    serveExam();
+    const user = userEvent.setup();
+
+    renderAt(`/tests/${EXAM_TEST.id}`);
+    await screen.findByText(EXAM_TEST.title);
+
+    const palette = screen.getByRole('navigation', { name: /question palette/i });
+    const flag = screen.getByRole('button', { name: 'Flag question 6' });
+
+    expect(flag).toHaveAttribute('aria-pressed', 'false');
+
+    await user.click(flag);
+
+    expect(flag).toHaveAttribute('aria-pressed', 'true');
+    expect(flag).toHaveTextContent('Flagged');
+    expect(within(palette).getByText('0 answered · 6 unanswered · 1 flagged')).toBeInTheDocument();
+    expect(
+      within(palette).getByRole('button', {
+        name: 'Question 6, speaking part 1, unanswered, flagged',
+      })
+    ).toBeInTheDocument();
+
+    await user.click(flag);
+
+    expect(flag).toHaveAttribute('aria-pressed', 'false');
+    expect(within(palette).getByText('0 answered · 6 unanswered · 0 flagged')).toBeInTheDocument();
+  });
+
+  it('jumps to a question and marks it current in the palette', async () => {
+    serveExam();
+    const user = userEvent.setup();
+
+    renderAt(`/tests/${EXAM_TEST.id}`);
+    await screen.findByText(EXAM_TEST.title);
+
+    const palette = screen.getByRole('navigation', { name: /question palette/i });
+    const target = within(palette).getByRole('button', { name: /^Question 4,/ });
+    const section = document.getElementById('exam-question-e4');
+
+    expect(section).not.toBeNull();
+    expect(section).toHaveAttribute('tabindex', '-1');
+
+    await user.click(target);
+
+    expect(section).toHaveFocus();
+    expect(target).toHaveAttribute('aria-current', 'true');
+  });
+
+  it('restores a flagged item after a refresh', async () => {
+    sessionStorage.setItem(
+      examProgressKey(EXAM_TEST.id),
+      JSON.stringify(storedAttempt({ flags: { e1: true } }))
+    );
+    serveExam();
+
+    renderAt(`/tests/${EXAM_TEST.id}`);
+
+    expect(await screen.findByRole('button', { name: 'Flag question 1' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+
+    const palette = screen.getByRole('navigation', { name: /question palette/i });
+
+    expect(within(palette).getByText('0 answered · 6 unanswered · 1 flagged')).toBeInTheDocument();
+    expect(
+      within(palette).getByRole('button', { name: 'Question 1, core part 1, unanswered, flagged' })
+    ).toBeInTheDocument();
+  });
+
   it('captures answers and posts the AG-303 payload exactly once', async () => {
     serveExam();
     const user = userEvent.setup();
@@ -133,6 +230,12 @@ describe('Timed mock exam screen', () => {
     );
 
     expect(screen.getByText(/5 of 6 answered/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Flag question 1' }));
+
+    expect(screen.getByRole('navigation', { name: /question palette/i })).toHaveTextContent(
+      '5 answered · 1 unanswered · 1 flagged'
+    );
 
     await user.click(screen.getByRole('button', { name: /submit exam/i }));
 
@@ -175,6 +278,7 @@ describe('Timed mock exam screen', () => {
       '/dashboard'
     );
     expect(screen.queryByRole('radio', { name: 'goes' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: /question palette/i })).not.toBeInTheDocument();
   });
 
   it('does not post twice while a submission is in flight', async () => {
@@ -197,6 +301,11 @@ describe('Timed mock exam screen', () => {
     await user.click(submit);
 
     expect(postRequests()).toHaveLength(1);
+
+    const palette = screen.getByRole('navigation', { name: /question palette/i });
+
+    expect(within(palette).getByRole('button', { name: /^Question 1,/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Flag question 1' })).toBeDisabled();
 
     await act(async () => {
       releaseSubmit();
