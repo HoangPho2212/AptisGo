@@ -8,7 +8,7 @@ APTIS GO combines instant auto-marking for receptive skills with lecturer rubric
 review for productive skills, then resolves a CEFR profile using the official
 Aptis 0–200 scale and the Core module as a borderline modifier.
 
-> **Status: Sprint 3 - AG-306 listening audio player complete.**
+> **Status: Sprint 3 - AG-307 autosave and submit confirmation complete.**
 > The repository now contains two decoupled applications: `client/` (React 19 +
 > Vite 8 + TailwindCSS 4) and `server/` (Node.js + Express 5), gated by ESLint 10
 > and Prettier 3. The API connects to MongoDB Atlas through a pooled Mongoose
@@ -34,10 +34,10 @@ Aptis 0–200 scale and the Core module as a borderline modifier.
 > question-by-question diagnostic runner), `/goals` (B1/B2 target, deadline
 > picker, and cadence preview), `/dashboard` (today's checklist and progress
 > bars), and `/tests/:id` (a timed mock exam runner with a question palette, a
-> listening player capped at two plays per track, a countdown, automatic
-> submission at zero, and the server's marked summary), driven by explicit
-> `PlacementViewState`, `GoalViewState`, `DashboardViewState`, and
-> `ExamViewState` objects. The new `Submission` model
+> listening player capped at two plays per track, a debounced autosave buffer
+> with a confirmed submission step, a countdown, automatic submission at zero,
+> and the server's marked summary), driven by explicit `PlacementViewState`,
+> `GoalViewState`, `DashboardViewState`, and `ExamViewState` objects. The new `Submission` model
 > stores one document
 > per attempt: a `details` array of per-question evaluations, `autoScore`,
 > `manualScore`, and `totalScore`, plus an
@@ -706,6 +706,21 @@ constant `LISTENING_PLAY_LIMIT` is pinned to
 `JayContract.validateListeningPlaysLimit` by a test; server-side play counting is
 not yet part of the ADS.
 
+Drafts are buffered in memory and written to `sessionStorage` 400 ms after the
+last change through `createExamSaveBuffer`, with forced flushes before
+submission, on tab hide, and on unmount. The submit panel reports
+`Saving…` then `Draft saved at HH:MM:SS`, and a restored attempt announces
+`Restored your saved attempt from HH:MM.` with a Dismiss button.
+
+`Review and submit` opens an accessible confirmation dialog instead of posting
+immediately: `role="dialog"`, focus on `Keep working`, `Tab` trapped, `Escape`
+or a backdrop click cancels, and focus returns to the trigger. It shows
+`N of M answered · U unanswered · F flagged`, warns when items are blank
+(`It will score zero.`), and states that answers cannot change afterwards.
+Automatic submission at zero bypasses the dialog so a timed attempt is never
+left ungraded. Every submit also flushes the buffer first, so the stored draft
+matches the request body.
+
 ## Security and errors
 
 `express-mongo-sanitize` runs after `express.json()` and before routes. It
@@ -770,8 +785,10 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── src/exam/ExamQuestionCard.jsx          # every question type, answer capture
 │   ├── src/exam/ListeningAudioPlayer.jsx      # custom transport with the two-play limit
 │   ├── src/exam/MockExamPage.jsx              # /tests/:id timer, auto-submit, result
+│   ├── src/exam/SubmitExamDialog.jsx          # accessible confirmation before submitting
 │   ├── src/exam/api.js                        # GET /api/tests/:id and POST /api/submissions
-│   ├── src/exam/examProgressStorage.js        # sessionStorage answers + deadline mirror
+│   ├── src/exam/examProgressStorage.js        # autosave record: answers, flags, plays, deadline
+│   ├── src/exam/examSaveBuffer.js             # debounced draft writes and flush hooks
 │   ├── src/exam/examViewState.js              # explicit ExamViewState, timer, payload
 │   ├── src/exam/QuestionPalette.jsx           # answered/unanswered/flagged palette and jump
 │   ├── src/goals/GoalsPage.jsx      # /goals target, deadline, and cadence form
@@ -907,7 +924,8 @@ Frontend test files:
 - `tests/auth-portal.test.jsx` — route, role, API, session, and consent behaviour
 - `tests/auth-context.test.jsx` — session restore, login/register, logout, and 401 state
 - `tests/axios-client.test.jsx` — Bearer header and error normalization
-- `tests/exam-screen.test.jsx` — load, palette, flags, jump/focus, submit, auto-submit, restore
+- `tests/exam-screen.test.jsx` — palette, flags, autosave status, recovery banner, confirmation dialog
+- `tests/exam-save-buffer.test.jsx` — debounce collapse, flush, dispose, subscriptions
 - `tests/exam-audio-player.test.jsx` — two-play limit, resume, failures, restored counts, Contract parity
 - `tests/exam-view-state.test.jsx` — `ExamViewState`, timer, payload, shuffle, flags, play counts, storage
 - `tests/goal-cadence.test.jsx` — deadline parsing, remaining days, and task caps
@@ -1153,6 +1171,8 @@ built with Vite for production.
 | Exam ViewState                | `npm run test:ui`                                                                       | Payload validation, deadline math, countdown formatting, seeded shuffle, flags, palette statuses, play counts, storage   |
 | Exam screen                   | `npm run test:ui`                                                                       | Load + countdown, palette totals, flag toggles, jump/focus, exact POST body, auto-submit once, restore                   |
 | Listening player              | `npm run test:ui`                                                                       | Two-play cap, pause/resume, post-end replay, disabled control, blocked autoplay, restored counts, JayContract parity     |
+| Exam save buffer              | `npm run test:ui`                                                                       | Debounce collapse, newest-state write, flush without double write, dispose, snapshot subscriptions, factory guards       |
+| Submit confirmation           | `npm run test:ui`                                                                       | Summary counts, unanswered warning, default focus, Tab trap, Escape/backdrop cancel, focus return, confirm posts once    |
 | Auth unit (TC01–TC03)         | `npm run test:jest`                                                                     | Register happy/validation/duplicate, login happy/negative, lecturer role guard                                           |
 | Auth API (TC01–TC03)          | `postman collection run postman/collections/aptis-go-auth`                              | Live registration, duplicate email, login, wrong password, unknown email; 11 assertions                                  |
 | Auth round-trip               | `MONGODB_TEST_URI=... node --test tests/auth.integration.test.js`                       | Register 201, role forcing, bcrypt, duplicate 409, login 200/401, token claims                                           |
@@ -1211,40 +1231,41 @@ gitGraph
 
 ## Documentation
 
-| File                                                        | Contents                                            |
-| ----------------------------------------------------------- | --------------------------------------------------- |
-| `docx/01_SRS_Project_Overview.md`                           | Scope, roles, KPIs                                  |
-| `docx/02_SAD_System_Architecture.md`                        | C4 views, containers, components                    |
-| `docx/03_DDS_Database_Schema.md`                            | Mongoose schemas                                    |
-| `docx/04_ADS_API_Specification.md.md`                       | REST endpoints                                      |
-| `docx/05_CSG_Coding_Standards.md`                           | Security and coding directives                      |
-| `docx/06_BRD_MoSCoW_and_User_Stories.md.md`                 | Requirements and user stories                       |
-| `docx/07_STP_Test_Plan_and_RTM.md`                          | Test plan and traceability matrix                   |
-| `design-log/#0001-aptis-format-alignment.md`                | Aptis format and scoring decisions                  |
-| `design-log/#0002-client-server-scaffold.md`                | AG-101 scaffold, lint, and format decisions         |
-| `design-log/#0003-mongodb-pool-user-schema.md`              | AG-102 pool, User schema, and password decisions    |
-| `design-log/#0004-auth-controller-jwt.md`                   | AG-103 register/login and JWT decisions             |
-| `design-log/#0005-rbac-middleware.md`                       | AG-104 verifyToken and role-guard decisions         |
-| `design-log/#0006-nosql-sanitization-error-handler.md`      | AG-105 sanitization and error Contract              |
-| `design-log/#0007-authentication-portal.md`                 | AG-106 auth portal, role, email, and consent        |
-| `design-log/#0008-auth-context-axios-protected-routes.md`   | AG-107 AuthContext, Axios JWT, and route guards     |
-| `design-log/#0009-jest-postman-auth-tests.md`               | AG-108 Jest and Postman TC01–TC03 evidence          |
-| `design-log/#0010-accept-any-valid-email.md`                | Any-email validation with optional `@fpt.edu.vn`    |
-| `design-log/#0011-integrate-aptis-logo.md`                  | Aptis logo assets and transparent backgrounds       |
-| `design-log/#0012-test-schema-embedded-questions.md`        | AG-201 embedded Test/Question schema and NFR02      |
-| `design-log/#0013-goal-study-plan-schemas.md`               | AG-202 Goal and StudyPlan schemas                   |
-| `design-log/#0014-placement-diagnostic-endpoint.md`         | AG-203 placement endpoint, NFR01, and NFR02         |
-| `design-log/#0015-diagnostic-cefr-evaluation.md`            | AG-204 CEFR evaluation and `currentLevel` update    |
-| `design-log/#0016-goal-roadmap-generator.md`                | AG-205 goal upsert, remaining days, and daily tasks |
-| `design-log/#0017-study-plan-task-completion.md`            | AG-206 task completion and derived progress         |
-| `design-log/#0018-diagnostic-placement-and-goal-screens.md` | AG-207 placement runner and goal setting screens    |
-| `design-log/#0019-student-dashboard-today-roadmap.md`       | AG-208 today dashboard read and checklist           |
-| `design-log/#0020-submission-schema.md`                     | AG-301 submission details, scores, and status       |
-| `design-log/#0021-test-detail-endpoint.md`                  | AG-302 single-test delivery and hidden answers      |
-| `design-log/#0022-submission-auto-marking.md`               | AG-303 deterministic R/L/G marking and scores       |
-| `design-log/#0023-timed-mock-exam-screen.md`                | AG-304 timed mock exam, countdown, and auto-submit  |
-| `design-log/#0024-exam-question-palette.md`                 | AG-305 palette states, flags, and question jumping  |
-| `design-log/#0025-listening-audio-player.md`                | AG-306 two-play listening player and play counts    |
+| File                                                          | Contents                                            |
+| ------------------------------------------------------------- | --------------------------------------------------- |
+| `docx/01_SRS_Project_Overview.md`                             | Scope, roles, KPIs                                  |
+| `docx/02_SAD_System_Architecture.md`                          | C4 views, containers, components                    |
+| `docx/03_DDS_Database_Schema.md`                              | Mongoose schemas                                    |
+| `docx/04_ADS_API_Specification.md.md`                         | REST endpoints                                      |
+| `docx/05_CSG_Coding_Standards.md`                             | Security and coding directives                      |
+| `docx/06_BRD_MoSCoW_and_User_Stories.md.md`                   | Requirements and user stories                       |
+| `docx/07_STP_Test_Plan_and_RTM.md`                            | Test plan and traceability matrix                   |
+| `design-log/#0001-aptis-format-alignment.md`                  | Aptis format and scoring decisions                  |
+| `design-log/#0002-client-server-scaffold.md`                  | AG-101 scaffold, lint, and format decisions         |
+| `design-log/#0003-mongodb-pool-user-schema.md`                | AG-102 pool, User schema, and password decisions    |
+| `design-log/#0004-auth-controller-jwt.md`                     | AG-103 register/login and JWT decisions             |
+| `design-log/#0005-rbac-middleware.md`                         | AG-104 verifyToken and role-guard decisions         |
+| `design-log/#0006-nosql-sanitization-error-handler.md`        | AG-105 sanitization and error Contract              |
+| `design-log/#0007-authentication-portal.md`                   | AG-106 auth portal, role, email, and consent        |
+| `design-log/#0008-auth-context-axios-protected-routes.md`     | AG-107 AuthContext, Axios JWT, and route guards     |
+| `design-log/#0009-jest-postman-auth-tests.md`                 | AG-108 Jest and Postman TC01–TC03 evidence          |
+| `design-log/#0010-accept-any-valid-email.md`                  | Any-email validation with optional `@fpt.edu.vn`    |
+| `design-log/#0011-integrate-aptis-logo.md`                    | Aptis logo assets and transparent backgrounds       |
+| `design-log/#0012-test-schema-embedded-questions.md`          | AG-201 embedded Test/Question schema and NFR02      |
+| `design-log/#0013-goal-study-plan-schemas.md`                 | AG-202 Goal and StudyPlan schemas                   |
+| `design-log/#0014-placement-diagnostic-endpoint.md`           | AG-203 placement endpoint, NFR01, and NFR02         |
+| `design-log/#0015-diagnostic-cefr-evaluation.md`              | AG-204 CEFR evaluation and `currentLevel` update    |
+| `design-log/#0016-goal-roadmap-generator.md`                  | AG-205 goal upsert, remaining days, and daily tasks |
+| `design-log/#0017-study-plan-task-completion.md`              | AG-206 task completion and derived progress         |
+| `design-log/#0018-diagnostic-placement-and-goal-screens.md`   | AG-207 placement runner and goal setting screens    |
+| `design-log/#0019-student-dashboard-today-roadmap.md`         | AG-208 today dashboard read and checklist           |
+| `design-log/#0020-submission-schema.md`                       | AG-301 submission details, scores, and status       |
+| `design-log/#0021-test-detail-endpoint.md`                    | AG-302 single-test delivery and hidden answers      |
+| `design-log/#0022-submission-auto-marking.md`                 | AG-303 deterministic R/L/G marking and scores       |
+| `design-log/#0023-timed-mock-exam-screen.md`                  | AG-304 timed mock exam, countdown, and auto-submit  |
+| `design-log/#0024-exam-question-palette.md`                   | AG-305 palette states, flags, and question jumping  |
+| `design-log/#0025-listening-audio-player.md`                  | AG-306 two-play listening player and play counts    |
+| `design-log/#0026-autosave-buffer-and-submit-confirmation.md` | AG-307 autosave buffer and submit confirmation      |
 
 ## Engineering rules
 
@@ -1284,6 +1305,7 @@ gitGraph
 - [x] AG-304 - Timed mock exam screen with countdown and auto-submit
 - [x] AG-305 - Interactive question palette with answered, unanswered, and flagged states
 - [x] AG-306 - Listening audio player with the official two-play limit
+- [x] AG-307 - Autosave buffer and pre-submission confirmation dialog
 - [ ] Sprint 2 - Express API and Mongoose models per ADS/DDS
 - [ ] Sprint 3 — Student SPA: placement, goals, study plan
 - [ ] Sprint 4 — Lecturer workspace and hybrid grading pipeline

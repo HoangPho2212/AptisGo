@@ -2,7 +2,7 @@ import { EXAM_VIEW_STATE_VERSION } from './examViewState.js';
 
 export const EXAM_PROGRESS_PREFIX = 'aptis-go:exam-progress';
 
-const SAVABLE_STATUSES = Object.freeze(['ready', 'submitting', 'submitted']);
+export const EXAM_SAVABLE_STATUSES = Object.freeze(['ready', 'submitting', 'submitted']);
 
 /**
  * @typedef {object} StoredExamProgress
@@ -68,7 +68,7 @@ function isValidProgress(value) {
 export function saveExamProgress(viewState, now = new Date()) {
   const testId = viewState?.test?.id;
 
-  if (!testId || !SAVABLE_STATUSES.includes(viewState.status)) {
+  if (!testId || !EXAM_SAVABLE_STATUSES.includes(viewState.status)) {
     return;
   }
 
