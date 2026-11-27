@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, screen, within } from '@testing-library/react';
+import { act, fireEvent, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { saveSession } from '../client/src/auth/authStorage.js';
+import { EXAM_SAVE_DEBOUNCE_MS } from '../client/src/exam/examSaveBuffer.js';
 import { examProgressKey } from '../client/src/exam/examProgressStorage.js';
 import { initialSentenceOrder } from '../client/src/exam/examViewState.js';
 import {
@@ -11,7 +12,13 @@ import {
   installApiAdapter,
   resetApiAdapter,
 } from './auth-test-utils.jsx';
-import { EXAM_TEST, STUDENT_SESSION, SUBMISSION_RESULT, renderAt } from './screen-fixtures.jsx';
+import {
+  EXAM_TEST,
+  LISTENING_TEST,
+  STUDENT_SESSION,
+  SUBMISSION_RESULT,
+  renderAt,
+} from './screen-fixtures.jsx';
 
 const FIXED_ID = '3f1d2c4b-0000-4000-8000-000000000001';
 
@@ -23,6 +30,16 @@ function serveExam({ onPost } = {}) {
 
     if (config.method === 'post' && config.url === '/api/submissions') {
       return onPost ? onPost(config) : { status: 201, data: SUBMISSION_RESULT };
+    }
+
+    return { status: 404, data: { error: 'Not found' } };
+  });
+}
+
+function serveListening() {
+  installApiAdapter((config) => {
+    if (config.method === 'get' && config.url === `/api/tests/${LISTENING_TEST.id}`) {
+      return { status: 200, data: LISTENING_TEST };
     }
 
     return { status: 404, data: { error: 'Not found' } };
@@ -208,6 +225,130 @@ describe('Timed mock exam screen', () => {
     ).toBeInTheDocument();
   });
 
+  it('debounces the saved draft and reports when it was written', async () => {
+    vi.useFakeTimers({ now: new Date() });
+    serveExam();
+
+    renderAt(`/tests/${EXAM_TEST.id}`);
+    await flushMicrotasks();
+
+    expect(screen.getByText(/draft will be saved automatically/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'goes' }));
+
+    expect(screen.getByText(/^saving/i)).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(EXAM_SAVE_DEBOUNCE_MS + 50);
+    });
+    await flushMicrotasks();
+
+    expect(screen.getByText(/draft saved at/i)).toBeInTheDocument();
+
+    const stored = JSON.parse(sessionStorage.getItem(examProgressKey(EXAM_TEST.id)));
+
+    expect(stored.answers).toEqual({ e1: 1 });
+    expect(stored.updatedAt).toBeTruthy();
+  });
+
+  it('acknowledges a restored attempt and lets the student dismiss the notice', async () => {
+    sessionStorage.setItem(
+      examProgressKey(EXAM_TEST.id),
+      JSON.stringify(storedAttempt({ answers: { e1: 1 }, flags: { e2: true } }))
+    );
+    serveExam();
+    const user = userEvent.setup();
+
+    renderAt(`/tests/${EXAM_TEST.id}`);
+
+    expect(await screen.findByText(/restored your saved attempt/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /dismiss/i }));
+
+    expect(screen.queryByText(/restored your saved attempt/i)).not.toBeInTheDocument();
+  });
+
+  it('asks for confirmation before submitting and focuses the safe choice', async () => {
+    serveExam();
+    const user = userEvent.setup();
+
+    renderAt(`/tests/${EXAM_TEST.id}`);
+    await screen.findByText(EXAM_TEST.title);
+
+    await user.click(screen.getByRole('button', { name: /review and submit/i }));
+
+    const dialog = screen.getByRole('dialog', { name: /submit exam\?/i });
+
+    expect(
+      within(dialog).getByText('0 of 6 answered · 6 unanswered · 0 flagged')
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/6 questions are still unanswered\. they will score zero\./i)
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/cannot change your answers after submitting/i)
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Keep working' })).toHaveFocus();
+    expect(postRequests()).toHaveLength(0);
+
+    await user.tab();
+    expect(within(dialog).getByRole('button', { name: 'Submit exam' })).toHaveFocus();
+
+    await user.tab();
+    expect(within(dialog).getByRole('button', { name: 'Keep working' })).toHaveFocus();
+
+    await user.tab({ shift: true });
+    expect(within(dialog).getByRole('button', { name: 'Submit exam' })).toHaveFocus();
+  });
+
+  it('cancels the confirmation without posting and restores focus', async () => {
+    serveExam();
+    const user = userEvent.setup();
+
+    renderAt(`/tests/${EXAM_TEST.id}`);
+    await screen.findByText(EXAM_TEST.title);
+
+    const trigger = screen.getByRole('button', { name: /review and submit/i });
+
+    await user.click(trigger);
+    await user.click(screen.getByRole('button', { name: 'Keep working' }));
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+
+    await user.click(trigger);
+    await user.keyboard('{Escape}');
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    await user.click(trigger);
+    await user.click(document.querySelector('[data-exam-dialog-backdrop]'));
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(postRequests()).toHaveLength(0);
+  });
+
+  it('does not warn about unanswered items when the paper is complete', async () => {
+    serveListening();
+    const user = userEvent.setup();
+
+    renderAt(`/tests/${LISTENING_TEST.id}`);
+    await screen.findByText(LISTENING_TEST.title);
+
+    await user.click(screen.getByRole('radio', { name: 'At a bank' }));
+    await user.selectOptions(screen.getByLabelText('Opening time'), 'nine');
+
+    await user.click(screen.getByRole('button', { name: /review and submit/i }));
+
+    const dialog = screen.getByRole('dialog', { name: /submit exam\?/i });
+
+    expect(
+      within(dialog).getByText('2 of 2 answered · 0 unanswered · 0 flagged')
+    ).toBeInTheDocument();
+    expect(within(dialog).queryByText(/still unanswered/i)).not.toBeInTheDocument();
+    expect(postRequests()).toHaveLength(0);
+  });
+
   it('captures answers and posts the AG-303 payload exactly once', async () => {
     serveExam();
     const user = userEvent.setup();
@@ -237,7 +378,13 @@ describe('Timed mock exam screen', () => {
       '5 answered · 1 unanswered · 1 flagged'
     );
 
-    await user.click(screen.getByRole('button', { name: /submit exam/i }));
+    await user.click(screen.getByRole('button', { name: /review and submit/i }));
+
+    const confirmDialog = screen.getByRole('dialog', { name: /submit exam\?/i });
+
+    expect(postRequests()).toHaveLength(0);
+
+    await user.click(within(confirmDialog).getByRole('button', { name: 'Submit exam' }));
 
     expect(
       await screen.findByRole('heading', { name: /submission received/i })
@@ -295,10 +442,16 @@ describe('Timed mock exam screen', () => {
     renderAt(`/tests/${EXAM_TEST.id}`);
     await screen.findByText(EXAM_TEST.title);
 
-    const submit = screen.getByRole('button', { name: /submit exam/i });
+    const trigger = screen.getByRole('button', { name: /review and submit/i });
 
-    await user.click(submit);
-    await user.click(submit);
+    await user.click(trigger);
+
+    const confirm = within(screen.getByRole('dialog')).getByRole('button', {
+      name: 'Submit exam',
+    });
+
+    await user.click(confirm);
+    await user.click(trigger);
 
     expect(postRequests()).toHaveLength(1);
 
@@ -344,6 +497,7 @@ describe('Timed mock exam screen', () => {
 
     expect(screen.getByText(/time is up/i)).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent(/submitted automatically/i);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
     const posts = postRequests();
 
@@ -382,7 +536,7 @@ describe('Timed mock exam screen', () => {
     expect(postRequests()).toHaveLength(1);
     expect(screen.getByRole('alert')).toHaveTextContent(/marking service unavailable/i);
     expect(screen.getByRole('timer')).toHaveTextContent('00:00');
-    expect(screen.getByRole('button', { name: /submit exam/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /review and submit/i })).toBeEnabled();
   });
 
   it('restores answers and the original deadline after a refresh', async () => {
@@ -417,12 +571,18 @@ describe('Timed mock exam screen', () => {
     await screen.findByText(EXAM_TEST.title);
 
     await user.click(screen.getByRole('radio', { name: 'goes' }));
-    await user.click(screen.getByRole('button', { name: /submit exam/i }));
+    await user.click(screen.getByRole('button', { name: /review and submit/i }));
+    await user.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Submit exam' })
+    );
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/marking service unavailable/i);
     expect(screen.getByRole('radio', { name: 'goes' })).toBeChecked();
 
-    await user.click(screen.getByRole('button', { name: /submit exam/i }));
+    await user.click(screen.getByRole('button', { name: /review and submit/i }));
+    await user.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Submit exam' })
+    );
 
     expect(
       await screen.findByRole('heading', { name: /submission received/i })

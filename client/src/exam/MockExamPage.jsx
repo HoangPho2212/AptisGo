@@ -5,13 +5,21 @@ import StudentShell from '../app/StudentShell.jsx';
 import { useAuth } from '../auth/useAuth.js';
 import ExamQuestionCard from './ExamQuestionCard.jsx';
 import QuestionPalette from './QuestionPalette.jsx';
+import SubmitExamDialog from './SubmitExamDialog.jsx';
 import { fetchExamTest, submitAttempt } from './api.js';
-import { clearExamProgress, readExamProgress, saveExamProgress } from './examProgressStorage.js';
+import { createExamSaveBuffer } from './examSaveBuffer.js';
+import {
+  EXAM_SAVABLE_STATUSES,
+  clearExamProgress,
+  readExamProgress,
+  saveExamProgress,
+} from './examProgressStorage.js';
 import {
   EXAM_STATUS,
   EXAM_TICK_MS,
   buildSubmissionPayload,
   countAnsweredQuestions,
+  countFlaggedQuestions,
   countdownTone,
   createExamViewState,
   formatCountdown,
@@ -50,6 +58,16 @@ const TONE_HINTS = Object.freeze({
   warning: 'Less than five minutes remaining.',
   critical: 'Less than a minute remaining.',
 });
+
+function formatClockTime(value) {
+  const date = new Date(value);
+
+  if (!Number.isFinite(date.getTime())) {
+    return 'an earlier time';
+  }
+
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
 
 function TestMeta({ test }) {
   const skills = Array.isArray(test.skillModules) ? test.skillModules : [];
@@ -217,12 +235,25 @@ function ResultPanel({ viewState, onNewAttempt }) {
 export default function MockExamPage() {
   const { id } = useParams();
   const { user } = useAuth();
+  const saveBufferRef = useRef(null);
+
+  if (saveBufferRef.current === null) {
+    saveBufferRef.current = createExamSaveBuffer({
+      save: (state, at) => saveExamProgress(state, at),
+    });
+  }
+
+  const saveBuffer = saveBufferRef.current;
   const [viewState, setViewState] = useState(createExamViewState);
+  const [saveSnapshot, setSaveSnapshot] = useState(() => saveBuffer.getSnapshot());
+  const [recovered, setRecovered] = useState(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [now, setNow] = useState(() => new Date());
   const [activeQuestionId, setActiveQuestionId] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
   const inFlight = useRef(false);
   const autoSubmitFired = useRef(false);
+  const skipNextSave = useRef(false);
 
   useEffect(() => {
     if (!user) {
@@ -241,8 +272,12 @@ export default function MockExamPage() {
           return;
         }
 
+        const saved = readExamProgress(test?.id);
+
         setNow(new Date());
-        setViewState(hydrateExamViewState(readExamProgress(test?.id), test));
+        setRecovered(saved ? { savedAt: saved.updatedAt } : null);
+        skipNextSave.current = true;
+        setViewState(hydrateExamViewState(saved, test));
       })
       .catch((error) => {
         if (!active) {
@@ -262,9 +297,50 @@ export default function MockExamPage() {
     };
   }, [user, id, reloadKey]);
 
+  useEffect(() => saveBuffer.subscribe(setSaveSnapshot), [saveBuffer]);
+
   useEffect(() => {
-    saveExamProgress(viewState);
-  }, [viewState]);
+    if (!EXAM_SAVABLE_STATUSES.includes(viewState.status)) {
+      return;
+    }
+
+    if (skipNextSave.current) {
+      skipNextSave.current = false;
+      return;
+    }
+
+    saveBuffer.schedule(viewState);
+  }, [saveBuffer, viewState]);
+
+  useEffect(() => {
+    function flushPending() {
+      saveBuffer.flush();
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'hidden') {
+        flushPending();
+      }
+    }
+
+    window.addEventListener('pagehide', flushPending);
+    window.addEventListener('beforeunload', flushPending);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('pagehide', flushPending);
+      window.removeEventListener('beforeunload', flushPending);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      flushPending();
+      saveBuffer.dispose();
+    };
+  }, [saveBuffer]);
+
+  useEffect(() => {
+    if (viewState.status !== EXAM_STATUS.READY) {
+      setConfirmOpen(false);
+    }
+  }, [viewState.status]);
 
   useEffect(() => {
     if (viewState.status !== EXAM_STATUS.READY) {
@@ -288,6 +364,7 @@ export default function MockExamPage() {
         return;
       }
 
+      saveBuffer.flush();
       inFlight.current = true;
       setViewState(withExamSubmitting);
 
@@ -306,7 +383,7 @@ export default function MockExamPage() {
         inFlight.current = false;
       }
     },
-    [viewState]
+    [viewState, saveBuffer]
   );
 
   const remaining = remainingSeconds(viewState.expiresAt, now);
@@ -329,9 +406,18 @@ export default function MockExamPage() {
   const test = viewState.test;
   const totalQuestions = test?.questions?.length ?? 0;
   const answered = countAnsweredQuestions(viewState);
+  const flagged = countFlaggedQuestions(viewState);
   const isReady = viewState.status === EXAM_STATUS.READY;
+  const saveLabel =
+    saveSnapshot.status === 'pending'
+      ? 'Saving…'
+      : saveSnapshot.status === 'saved' && saveSnapshot.savedAt
+        ? `Draft saved at ${formatClockTime(saveSnapshot.savedAt)}`
+        : 'Draft will be saved automatically.';
 
   function handleRetry() {
+    setConfirmOpen(false);
+    setRecovered(null);
     setViewState(createExamViewState());
     setReloadKey((count) => count + 1);
   }
@@ -340,9 +426,16 @@ export default function MockExamPage() {
     clearExamProgress(test?.id);
     inFlight.current = false;
     autoSubmitFired.current = false;
+    setConfirmOpen(false);
+    setRecovered(null);
     setActiveQuestionId(null);
     setNow(new Date());
     setViewState(withExamTest(createExamViewState(), test));
+  }
+
+  function handleConfirmSubmit() {
+    setConfirmOpen(false);
+    void submit(false);
   }
 
   function handlePaletteJump(questionId) {
@@ -413,6 +506,25 @@ export default function MockExamPage() {
 
         {test ? (
           <>
+            {recovered ? (
+              <div
+                aria-live="polite"
+                className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-teal-400/25 bg-teal-400/10 px-4 py-3 text-sm text-teal-100"
+              >
+                <p>
+                  Restored your saved attempt from {formatClockTime(recovered.savedAt)}. Answers,
+                  flags, and listening plays are kept.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setRecovered(null)}
+                  className="rounded-lg border border-teal-300/40 px-3 py-1 text-xs font-semibold text-teal-100 transition hover:bg-teal-300/10 focus-visible:ring-2 focus-visible:ring-teal-300/60 focus-visible:outline-none"
+                >
+                  Dismiss
+                </button>
+              </div>
+            ) : null}
+
             <TestMeta test={test} />
             <ExamTimer remaining={remaining} answered={answered} totalQuestions={totalQuestions} />
 
@@ -495,17 +607,32 @@ export default function MockExamPage() {
 
                   <button
                     type="button"
-                    onClick={() => void submit(false)}
+                    onClick={() => setConfirmOpen(true)}
                     disabled={!isReady || totalQuestions === 0}
                     className={`mt-4 ${PRIMARY_BUTTON}`}
                   >
-                    {viewState.status === EXAM_STATUS.SUBMITTING ? 'Submitting…' : 'Submit exam'}
+                    {viewState.status === EXAM_STATUS.SUBMITTING
+                      ? 'Submitting…'
+                      : 'Review and submit'}
                   </button>
+
+                  <p role="status" className="mt-3 text-xs text-slate-500">
+                    {saveLabel}
+                  </p>
                 </section>
               </>
             )}
           </>
         ) : null}
+
+        <SubmitExamDialog
+          open={confirmOpen && isReady}
+          answered={answered}
+          total={totalQuestions}
+          flagged={flagged}
+          onCancel={() => setConfirmOpen(false)}
+          onConfirm={handleConfirmSubmit}
+        />
       </div>
     </StudentShell>
   );
