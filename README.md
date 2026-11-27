@@ -8,7 +8,7 @@ APTIS GO combines instant auto-marking for receptive skills with lecturer rubric
 review for productive skills, then resolves a CEFR profile using the official
 Aptis 0–200 scale and the Core module as a borderline modifier.
 
-> **Status: Sprint 3 - AG-307 autosave and submit confirmation complete.**
+> **Status: Sprint 3 - AG-308 NFR01 latency profile complete.**
 > The repository now contains two decoupled applications: `client/` (React 19 +
 > Vite 8 + TailwindCSS 4) and `server/` (Node.js + Express 5), gated by ESLint 10
 > and Prettier 3. The API connects to MongoDB Atlas through a pooled Mongoose
@@ -22,7 +22,9 @@ Aptis 0–200 scale and the Core module as a borderline modifier.
 > `POST /api/submissions` endpoint marks Core, Reading, and Listening
 > deterministically against the stored answer keys, stores the per-question
 > `details` and per-skill 0-50 scores, and routes Writing/Speaking attempts to
-> `pending_review`. The diagnostic evaluator validates 0-50 skill
+> `pending_review`. A seeded profile now holds that endpoint at p95 9.9 ms
+> sequentially and p95 34.9 ms with five concurrent writers on the local
+> harness, well inside the 500 ms NFR01 bound. The diagnostic evaluator validates 0-50 skill
 > scores, reuses the JayContract CEFR profile, and persists the resulting
 > `User.currentLevel`. The new `POST /api/goals` endpoint rejects past
 > deadlines, calculates remaining days, upserts the student goal, and
@@ -894,6 +896,7 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── jest/
 │   │   └── auth-controller.test.js  # TC01-TC03 controller/middleware units
 │   ├── jwt.test.js                  # claims, expiry, tamper rejection
+│   ├── latency-stats.test.js        # percentile aggregation for the NFR01 profile
 │   ├── mongo-sanitize.test.js       # NoSQL key sanitization + Express 5 adapter
 │   ├── password.test.js             # bcrypt hashing Contract
 │   ├── placement-controller.test.js # placement 404 without a published diagnostic
@@ -907,6 +910,9 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── study-plan-routes.test.js    # student-only task toggle and 400 Contracts
 │   ├── study-plan-task-completion.integration.test.js # opt-in toggle + progress round-trip
 │   ├── study-plan-validator.test.js # completion boolean and 24-hex task id
+│   ├── submission-latency-profile.integration.test.js # opt-in NFR01 latency percentiles
+│   ├── support/
+│   │   └── latencyStats.js           # shared percentile helper for the profile
 │   ├── test-model.test.js           # Test schema, embedded questions, answer hiding
 │   ├── test-repository.integration.test.js  # opt-in embedded answer projection
 │   ├── user-model.test.js           # User schema, indexes, redaction
@@ -1041,23 +1047,32 @@ npm run test:jest               # TC01-TC03 Jest controller/middleware units
 npm run lint                    # root, client, and server ESLint
 npm run format:check            # Prettier verification
 npm --prefix client run build   # production SPA build to client/dist
+
+# NFR01 latency profile (needs a local MongoDB or Atlas)
+$env:MONGODB_TEST_URI="mongodb://127.0.0.1:27017/aptis-go-test"
+node --test tests/submission-latency-profile.integration.test.js
 ```
 
 Expected test result (database integration tests are skipped without
 `MONGODB_TEST_URI`):
 
 ```text
-ℹ tests 181
-ℹ pass 173
+ℹ tests 260
+ℹ pass 247
 ℹ fail 0
-ℹ skipped 8
+ℹ skipped 13
 ```
+
+The latency profile runs 40 sequential submissions plus 5 virtual users × 8
+submissions, reports `min / p50 / p90 / p95 / p99 / max / mean`, checks one
+`Test.findOne` per request, and fails if either p95 reaches 500 ms.
+`PROFILE_REQUESTS`, `PROFILE_VUS`, and `PROFILE_ITERATIONS` scale the run.
 
 Expected UI result:
 
 ```text
-ℹ tests 94
-ℹ pass 94
+ℹ tests 197
+ℹ pass 197
 ℹ fail 0
 ```
 
@@ -1183,6 +1198,8 @@ built with Vite for production.
 | Placement round-trip          | `MONGODB_TEST_URI=... node --test tests/placement.integration.test.js`                  | 50-question diagnostic, hidden answers, one query, <500 ms response (NFR01)                                              |
 | Test detail round-trip        | `MONGODB_TEST_URI=... node --test tests/test-detail.integration.test.js`                | Published test by id, unpublished/unknown `404`, hidden nested answers, one query, <500 ms                               |
 | Submission marking round-trip | `MONGODB_TEST_URI=... node --test tests/submission-marking.integration.test.js`         | Mixed/objective attempts, stored details, deterministic retakes, one query, <500 ms (FR04/NFR01)                         |
+| Latency stats                 | `node --test tests/latency-stats.test.js`                                               | Nearest-rank p50/p90/p95/p99, single sample, unsorted input, fractional ms, empty/invalid rejection                      |
+| Submission latency profile    | `MONGODB_TEST_URI=... node --test tests/submission-latency-profile.integration.test.js` | 40 sequential + 5 VUs × 8 writes, full percentile report, one read per request, p95 < 500 ms gate (NFR01)                |
 | Diagnostic round-trip         | `MONGODB_TEST_URI=... node --test tests/diagnostic-evaluation.integration.test.js`      | `User.currentLevel` persistence, Core modifier, invalid-input non-mutation, 404 user                                     |
 | Task completion round-trip    | `MONGODB_TEST_URI=... node --test tests/study-plan-task-completion.integration.test.js` | Embedded flag persistence, plan/roadmap percentages, idempotent retry, cross-student `404`                               |
 
@@ -1266,6 +1283,7 @@ gitGraph
 | `design-log/#0024-exam-question-palette.md`                   | AG-305 palette states, flags, and question jumping  |
 | `design-log/#0025-listening-audio-player.md`                  | AG-306 two-play listening player and play counts    |
 | `design-log/#0026-autosave-buffer-and-submit-confirmation.md` | AG-307 autosave buffer and submit confirmation      |
+| `design-log/#0027-submission-latency-profile.md`              | AG-308 NFR01 submission latency profile             |
 
 ## Engineering rules
 
@@ -1306,6 +1324,7 @@ gitGraph
 - [x] AG-305 - Interactive question palette with answered, unanswered, and flagged states
 - [x] AG-306 - Listening audio player with the official two-play limit
 - [x] AG-307 - Autosave buffer and pre-submission confirmation dialog
+- [x] AG-308 - NFR01 latency profile for `POST /api/submissions`
 - [ ] Sprint 2 - Express API and Mongoose models per ADS/DDS
 - [ ] Sprint 3 — Student SPA: placement, goals, study plan
 - [ ] Sprint 4 — Lecturer workspace and hybrid grading pipeline
