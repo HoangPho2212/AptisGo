@@ -1,4 +1,5 @@
 import { countWords, sentenceOrderFor } from './examViewState.js';
+import ListeningAudioPlayer from './ListeningAudioPlayer.jsx';
 
 const DROPDOWN_TYPES = Object.freeze(['dropdown_match', 'dropdown_cloze']);
 
@@ -232,6 +233,7 @@ export default function ExamQuestionCard({
   answer,
   anchorId,
   flagged = false,
+  playsUsed = 0,
   disabled = false,
   onOption,
   onDropdown,
@@ -239,6 +241,7 @@ export default function ExamQuestionCard({
   onFieldChange,
   onEssayChange,
   onToggleFlag,
+  onPlayStarted,
 }) {
   if (!question) {
     return null;
@@ -270,6 +273,22 @@ export default function ExamQuestionCard({
       <p id={promptId} className="mt-4 text-base leading-7 font-medium text-white">
         {question.prompt}
       </p>
+
+      {question.skill === 'listening' ? (
+        question.mediaUrl ? (
+          <ListeningAudioPlayer
+            questionId={question.id}
+            src={question.mediaUrl}
+            playsUsed={playsUsed}
+            disabled={disabled}
+            onPlayStarted={onPlayStarted}
+          />
+        ) : (
+          <p className="mt-4 rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-slate-400">
+            Audio is not available for this question.
+          </p>
+        )
+      ) : null}
 
       {question.questionType === 'mcq_single' ? (
         <ChoiceOptions

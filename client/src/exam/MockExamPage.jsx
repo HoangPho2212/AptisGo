@@ -18,7 +18,9 @@ import {
   hydrateExamViewState,
   isQuestionFlagged,
   moveSentence,
+  playsUsedFor,
   questionStatuses,
+  recordTrackPlay,
   remainingSeconds,
   toggleQuestionFlag,
   withDropdownAnswer,
@@ -434,9 +436,13 @@ export default function MockExamPage() {
                       anchorId={`exam-question-${question.id}`}
                       answer={viewState.answers[question.id]}
                       flagged={isQuestionFlagged(viewState, question.id)}
+                      playsUsed={playsUsedFor(viewState, question.id)}
                       disabled={!isReady}
                       onToggleFlag={() =>
                         setViewState((current) => toggleQuestionFlag(current, question.id))
+                      }
+                      onPlayStarted={() =>
+                        setViewState((current) => recordTrackPlay(current, question.id))
                       }
                       onOption={(optionIndex) =>
                         setViewState((current) =>
