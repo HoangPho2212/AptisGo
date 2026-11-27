@@ -7,19 +7,26 @@ import {
   EXAM_VIEW_STATE_VERSION,
   EXAM_WARNING_SECONDS,
   INCOMPLETE_TEST_MESSAGE,
+  LISTENING_PLAY_LIMIT,
   buildSubmissionPayload,
+  canPlayTrack,
   countAnsweredQuestions,
   countFlaggedQuestions,
   countWords,
   countdownTone,
   createExamViewState,
   formatCountdown,
+  formatPlayClock,
   hydrateExamViewState,
   initialSentenceOrder,
   isExpired,
+  isListeningTrack,
   isQuestionFlagged,
   moveSentence,
+  playsRemainingFor,
+  playsUsedFor,
   questionStatuses,
+  recordTrackPlay,
   remainingSeconds,
   toggleQuestionFlag,
   withDropdownAnswer,
@@ -38,13 +45,17 @@ import {
   readExamProgress,
   saveExamProgress,
 } from '../client/src/exam/examProgressStorage.js';
-import { EXAM_TEST } from './screen-fixtures.jsx';
+import { EXAM_TEST, LISTENING_TEST } from './screen-fixtures.jsx';
 
 const NOW = new Date('2026-11-23T09:00:00.000Z');
 const ORDER_QUESTION = EXAM_TEST.questions[2];
 
 function readyState(now = NOW) {
   return withExamTest(createExamViewState(), EXAM_TEST, now);
+}
+
+function listeningState(now = NOW) {
+  return withExamTest(createExamViewState(), LISTENING_TEST, now);
 }
 
 function answeredState() {
@@ -74,6 +85,7 @@ describe('ExamViewState', () => {
       test: null,
       answers: {},
       flags: {},
+      playCounts: {},
       startedAt: null,
       expiresAt: null,
       autoSubmitted: false,
@@ -341,6 +353,90 @@ describe('ExamViewState', () => {
     expect(withExamTest(createExamViewState(), EXAM_TEST, NOW).flags).toEqual({});
   });
 
+  it('identifies listening tracks that carry audio', () => {
+    expect(LISTENING_PLAY_LIMIT).toBe(2);
+    expect(isListeningTrack(LISTENING_TEST.questions[0])).toBe(true);
+    expect(isListeningTrack(LISTENING_TEST.questions[1])).toBe(false);
+    expect(isListeningTrack(EXAM_TEST.questions[0])).toBe(false);
+    expect(isListeningTrack({ skill: 'listening', mediaUrl: '' })).toBe(false);
+    expect(isListeningTrack({ skill: 'listening', mediaUrl: 42 })).toBe(false);
+    expect(isListeningTrack(null)).toBe(false);
+  });
+
+  it('records at most two plays for a listening track', () => {
+    let viewState = listeningState();
+
+    expect(viewState.playCounts).toEqual({});
+    expect(playsUsedFor(viewState, 'l1')).toBe(0);
+    expect(playsRemainingFor(viewState, 'l1')).toBe(2);
+    expect(canPlayTrack(viewState, 'l1')).toBe(true);
+
+    viewState = recordTrackPlay(viewState, 'l1');
+    expect(viewState.playCounts).toEqual({ l1: 1 });
+    expect(playsUsedFor(viewState, 'l1')).toBe(1);
+    expect(playsRemainingFor(viewState, 'l1')).toBe(1);
+    expect(canPlayTrack(viewState, 'l1')).toBe(true);
+
+    viewState = recordTrackPlay(viewState, 'l1');
+    expect(viewState.playCounts).toEqual({ l1: 2 });
+    expect(playsRemainingFor(viewState, 'l1')).toBe(0);
+    expect(canPlayTrack(viewState, 'l1')).toBe(false);
+
+    expect(recordTrackPlay(viewState, 'l1')).toBe(viewState);
+  });
+
+  it('ignores play records that cannot apply', () => {
+    const ready = listeningState();
+
+    expect(recordTrackPlay(ready, 'missing')).toBe(ready);
+    expect(recordTrackPlay(ready, 'l2')).toBe(ready);
+    expect(recordTrackPlay(ready, '')).toBe(ready);
+
+    const submitting = withExamSubmitting(ready);
+
+    expect(recordTrackPlay(submitting, 'l1')).toBe(submitting);
+    expect(recordTrackPlay(readyState(), 'e1')).toStrictEqual(readyState());
+  });
+
+  it('clamps stored play counts to the official range', () => {
+    const overLimit = { ...listeningState(), playCounts: { l1: 9 } };
+    const negative = { ...listeningState(), playCounts: { l1: -1 } };
+    const fractional = { ...listeningState(), playCounts: { l1: 1.5 } };
+
+    expect(playsUsedFor(overLimit, 'l1')).toBe(2);
+    expect(playsRemainingFor(overLimit, 'l1')).toBe(0);
+    expect(canPlayTrack(overLimit, 'l1')).toBe(false);
+    expect(playsUsedFor(negative, 'l1')).toBe(0);
+    expect(playsUsedFor(fractional, 'l1')).toBe(0);
+    expect(playsUsedFor(listeningState(), 'l2')).toBe(0);
+  });
+
+  it('formats the audio clock as minutes and seconds', () => {
+    expect(formatPlayClock(0)).toBe('0:00');
+    expect(formatPlayClock(7)).toBe('0:07');
+    expect(formatPlayClock(65)).toBe('1:05');
+    expect(formatPlayClock(600)).toBe('10:00');
+    expect(formatPlayClock(-5)).toBe('0:00');
+    expect(formatPlayClock(Number.NaN)).toBe('0:00');
+    expect(formatPlayClock(null)).toBe('0:00');
+    expect(formatPlayClock(Infinity)).toBe('0:00');
+  });
+
+  it('keeps play counts through submission transitions and clears them for a new attempt', () => {
+    const played = recordTrackPlay(listeningState(), 'l1');
+    const submitted = withExamSubmitted(
+      withExamSubmitting(played),
+      { status: 'completed' },
+      { now: NOW }
+    );
+    const failed = withSubmissionError(withExamSubmitting(played), { message: 'Offline' });
+
+    expect(submitted.playCounts).toEqual({ l1: 1 });
+    expect(failed.playCounts).toEqual({ l1: 1 });
+    expect(listeningState().playCounts).toEqual({});
+    expect(withExamError(createExamViewState(), { message: 'x' }).playCounts).toEqual({});
+  });
+
   it('builds one answer per question, sending null for anything unanswered', () => {
     expect(buildSubmissionPayload(readyState())).toEqual({
       testId: 'test-exam-1',
@@ -540,6 +636,62 @@ describe('ExamViewState', () => {
     expect(viewState.flags).toEqual({});
   });
 
+  it('restores play counts for listening tracks and drops anything else', () => {
+    const saved = {
+      version: 1,
+      testId: LISTENING_TEST.id,
+      startedAt: '2026-11-23T08:50:00.000Z',
+      expiresAt: '2026-11-23T09:50:00.000Z',
+      answers: {},
+      flags: {},
+      playCounts: { l1: 2, l2: 1, 'ghost-question': 1 },
+      submittedAt: null,
+      autoSubmitted: false,
+      result: null,
+    };
+
+    const viewState = hydrateExamViewState(saved, LISTENING_TEST, NOW);
+
+    expect(viewState.playCounts).toEqual({ l1: 2 });
+    expect(playsUsedFor(viewState, 'l1')).toBe(2);
+    expect(canPlayTrack(viewState, 'l1')).toBe(false);
+  });
+
+  it('clamps stored play counts when hydrating', () => {
+    const saved = {
+      version: 1,
+      testId: LISTENING_TEST.id,
+      startedAt: '2026-11-23T08:50:00.000Z',
+      expiresAt: '2026-11-23T09:50:00.000Z',
+      answers: {},
+      playCounts: { l1: 7, l2: -2 },
+      submittedAt: null,
+      autoSubmitted: false,
+      result: null,
+    };
+
+    expect(hydrateExamViewState(saved, LISTENING_TEST, NOW).playCounts).toEqual({ l1: 2 });
+  });
+
+  it('hydrates a record written before play counts existed', () => {
+    const saved = {
+      version: 1,
+      testId: LISTENING_TEST.id,
+      startedAt: '2026-11-23T08:50:00.000Z',
+      expiresAt: '2026-11-23T09:50:00.000Z',
+      answers: { l1: 1 },
+      submittedAt: null,
+      autoSubmitted: false,
+      result: null,
+    };
+
+    const viewState = hydrateExamViewState(saved, LISTENING_TEST, NOW);
+
+    expect(viewState.status).toBe('ready');
+    expect(viewState.answers).toEqual({ l1: 1 });
+    expect(viewState.playCounts).toEqual({});
+  });
+
   it('restores a submitted attempt instead of restarting it', () => {
     const saved = {
       version: 1,
@@ -573,7 +725,14 @@ describe('Exam progress storage', () => {
     expect(saved.expiresAt).toBe('2026-11-23T10:00:00.000Z');
     expect(saved.answers.e1).toBe(1);
     expect(saved.flags).toEqual({});
+    expect(saved.playCounts).toEqual({});
     expect(saved.updatedAt).toBe('2026-11-23T09:00:00.000Z');
+  });
+
+  it('persists listening play counts with the attempt', () => {
+    saveExamProgress(recordTrackPlay(listeningState(), 'l1'), NOW);
+
+    expect(readExamProgress(LISTENING_TEST.id).playCounts).toEqual({ l1: 1 });
   });
 
   it('persists question flags with the attempt', () => {
@@ -602,6 +761,7 @@ describe('Exam progress storage', () => {
     expect(saved).not.toBeNull();
     expect(saved.answers).toEqual({ e1: 2 });
     expect(saved.flags).toBeUndefined();
+    expect(saved.playCounts).toBeUndefined();
   });
 
   it('does not restore another test or a corrupt record', () => {

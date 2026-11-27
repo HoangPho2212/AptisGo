@@ -8,7 +8,7 @@ APTIS GO combines instant auto-marking for receptive skills with lecturer rubric
 review for productive skills, then resolves a CEFR profile using the official
 Aptis 0–200 scale and the Core module as a borderline modifier.
 
-> **Status: Sprint 3 - AG-305 question palette complete.**
+> **Status: Sprint 3 - AG-306 listening audio player complete.**
 > The repository now contains two decoupled applications: `client/` (React 19 +
 > Vite 8 + TailwindCSS 4) and `server/` (Node.js + Express 5), gated by ESLint 10
 > and Prettier 3. The API connects to MongoDB Atlas through a pooled Mongoose
@@ -34,9 +34,10 @@ Aptis 0–200 scale and the Core module as a borderline modifier.
 > question-by-question diagnostic runner), `/goals` (B1/B2 target, deadline
 > picker, and cadence preview), `/dashboard` (today's checklist and progress
 > bars), and `/tests/:id` (a timed mock exam runner with a question palette, a
-> countdown, automatic submission at zero, and the server's marked summary),
-> driven by explicit `PlacementViewState`, `GoalViewState`,
-> `DashboardViewState`, and `ExamViewState` objects. The new `Submission` model
+> listening player capped at two plays per track, a countdown, automatic
+> submission at zero, and the server's marked summary), driven by explicit
+> `PlacementViewState`, `GoalViewState`, `DashboardViewState`, and
+> `ExamViewState` objects. The new `Submission` model
 > stores one document
 > per attempt: a `details` array of per-question evaluations, `autoScore`,
 > `manualScore`, and `totalScore`, plus an
@@ -613,12 +614,12 @@ is the end of a UTC day.
 
 ## Student screens
 
-| Path         | Guard                           | Purpose                                                |
-| ------------ | ------------------------------- | ------------------------------------------------------ |
-| `/placement` | `ProtectedRoute` (student only) | Diagnostic runner backed by `GET /api/tests/placement` |
-| `/goals`     | `ProtectedRoute` (student only) | B1/B2 target, deadline picker, and roadmap generation  |
-| `/dashboard` | `ProtectedRoute` (student only) | Today's checklist and progress bars                    |
-| `/tests/:id` | `ProtectedRoute` (student only) | Timed mock exam with countdown and auto-submit         |
+| Path         | Guard                           | Purpose                                                   |
+| ------------ | ------------------------------- | --------------------------------------------------------- |
+| `/placement` | `ProtectedRoute` (student only) | Diagnostic runner backed by `GET /api/tests/placement`    |
+| `/goals`     | `ProtectedRoute` (student only) | B1/B2 target, deadline picker, and roadmap generation     |
+| `/dashboard` | `ProtectedRoute` (student only) | Today's checklist and progress bars                       |
+| `/tests/:id` | `ProtectedRoute` (student only) | Timed mock exam with palette, two-play audio, auto-submit |
 
 All four screens use the shared `StudentShell` header, and the student workspace
 links to the first three as Step 1, Step 2, and Step 3. `/tests/:id` has no list
@@ -690,6 +691,21 @@ coexist with answers, are stored with the attempt under `flags`, and are never
 sent to the API. The palette is hidden on the result panel and disabled while a
 submission is in flight.
 
+Listening items render a custom player above their options: `Play audio` /
+`Pause` / `Play again`, a `N of 2 plays used` counter, a `2 plays remaining` /
+`1 play remaining` / `No plays remaining` status, and a display-only progress
+bar with an `m:ss` clock. The official two-play limit is enforced twice: the
+control disables at the limit, and `recordTrackPlay` refuses a third increment
+even if called directly. A new play is recorded only after `HTMLMediaElement`
+resolves `play()`, so blocked autoplay never costs a play; pausing and resuming
+continues the same play. Counts live under `playCounts` in the same tab record,
+so a refresh cannot buy a third listen. Playback is deliberately not scrubbable,
+and a listening item without `mediaUrl` shows
+`Audio is not available for this question.` instead of a dead control. The client
+constant `LISTENING_PLAY_LIMIT` is pinned to
+`JayContract.validateListeningPlaysLimit` by a test; server-side play counting is
+not yet part of the ADS.
+
 ## Security and errors
 
 `express-mongo-sanitize` runs after `express.json()` and before routes. It
@@ -742,6 +758,7 @@ Unknown 5xx details are logged server-side and never returned to the client.
 ```text
 .
 ├── client/                          # React SPA (ESM)
+│   ├── public/audio/demo-listening.wav        # local listening track for the demo seed
 │   ├── src/App.jsx                  # Router: auth portal, role workspaces, student screens
 │   ├── src/app/Brand.jsx            # Shared logo block
 │   ├── src/app/ProgressBar.jsx      # Accessible progress bar with aria-valuenow
@@ -751,6 +768,7 @@ Unknown 5xx details are logged server-side and never returned to the client.
 │   ├── src/dashboard/api.js                   # GET /today and PATCH task wrappers
 │   ├── src/dashboard/dashboardViewState.js    # explicit DashboardViewState
 │   ├── src/exam/ExamQuestionCard.jsx          # every question type, answer capture
+│   ├── src/exam/ListeningAudioPlayer.jsx      # custom transport with the two-play limit
 │   ├── src/exam/MockExamPage.jsx              # /tests/:id timer, auto-submit, result
 │   ├── src/exam/api.js                        # GET /api/tests/:id and POST /api/submissions
 │   ├── src/exam/examProgressStorage.js        # sessionStorage answers + deadline mirror
@@ -890,7 +908,8 @@ Frontend test files:
 - `tests/auth-context.test.jsx` — session restore, login/register, logout, and 401 state
 - `tests/axios-client.test.jsx` — Bearer header and error normalization
 - `tests/exam-screen.test.jsx` — load, palette, flags, jump/focus, submit, auto-submit, restore
-- `tests/exam-view-state.test.jsx` — `ExamViewState`, timer, payload, shuffle, flags, storage
+- `tests/exam-audio-player.test.jsx` — two-play limit, resume, failures, restored counts, Contract parity
+- `tests/exam-view-state.test.jsx` — `ExamViewState`, timer, payload, shuffle, flags, play counts, storage
 - `tests/goal-cadence.test.jsx` — deadline parsing, remaining days, and task caps
 - `tests/goal-screen.test.jsx` — B1/B2 form, validation, request body, roadmap summary
 - `tests/goal-view-state.test.jsx` — `GoalViewState` transitions and validation
@@ -1131,8 +1150,9 @@ built with Vite for production.
 | Goal screen                   | `npm run test:ui`                                                                       | B1/B2 selector, deadline picker, blocked submissions, request body, roadmap summary, server details, captured answers    |
 | Dashboard ViewState           | `npm run test:ui`                                                                       | Payload validation, load/empty/error transitions, pending lock, confirmed task updates, day summary                      |
 | Dashboard screen              | `npm run test:ui`                                                                       | Today checklist, progress bars, PATCH toggle, pending lock, failed toggle, empty state, retry, completion message        |
-| Exam ViewState                | `npm run test:ui`                                                                       | Payload validation, deadline math, countdown formatting, seeded shuffle, flags, palette statuses, storage                |
+| Exam ViewState                | `npm run test:ui`                                                                       | Payload validation, deadline math, countdown formatting, seeded shuffle, flags, palette statuses, play counts, storage   |
 | Exam screen                   | `npm run test:ui`                                                                       | Load + countdown, palette totals, flag toggles, jump/focus, exact POST body, auto-submit once, restore                   |
+| Listening player              | `npm run test:ui`                                                                       | Two-play cap, pause/resume, post-end replay, disabled control, blocked autoplay, restored counts, JayContract parity     |
 | Auth unit (TC01–TC03)         | `npm run test:jest`                                                                     | Register happy/validation/duplicate, login happy/negative, lecturer role guard                                           |
 | Auth API (TC01–TC03)          | `postman collection run postman/collections/aptis-go-auth`                              | Live registration, duplicate email, login, wrong password, unknown email; 11 assertions                                  |
 | Auth round-trip               | `MONGODB_TEST_URI=... node --test tests/auth.integration.test.js`                       | Register 201, role forcing, bcrypt, duplicate 409, login 200/401, token claims                                           |
@@ -1224,6 +1244,7 @@ gitGraph
 | `design-log/#0022-submission-auto-marking.md`               | AG-303 deterministic R/L/G marking and scores       |
 | `design-log/#0023-timed-mock-exam-screen.md`                | AG-304 timed mock exam, countdown, and auto-submit  |
 | `design-log/#0024-exam-question-palette.md`                 | AG-305 palette states, flags, and question jumping  |
+| `design-log/#0025-listening-audio-player.md`                | AG-306 two-play listening player and play counts    |
 
 ## Engineering rules
 
@@ -1262,6 +1283,7 @@ gitGraph
 - [x] AG-303 - Deterministic auto-marking for Core, Reading, and Listening
 - [x] AG-304 - Timed mock exam screen with countdown and auto-submit
 - [x] AG-305 - Interactive question palette with answered, unanswered, and flagged states
+- [x] AG-306 - Listening audio player with the official two-play limit
 - [ ] Sprint 2 - Express API and Mongoose models per ADS/DDS
 - [ ] Sprint 3 — Student SPA: placement, goals, study plan
 - [ ] Sprint 4 — Lecturer workspace and hybrid grading pipeline

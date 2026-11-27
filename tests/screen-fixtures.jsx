@@ -163,6 +163,45 @@ export const EXAM_TEST = {
   ],
 };
 
+export const LISTENING_TEST = {
+  id: 'test-listening-1',
+  title: 'Listening Mock 1',
+  description: 'Two listening items with the official two-play limit.',
+  type: 'mock',
+  targetCefr: 'B2',
+  skillModules: ['listening'],
+  durationMinutes: 10,
+  questionCount: 2,
+  questions: [
+    {
+      id: 'l1',
+      skill: 'listening',
+      part: 1,
+      questionType: 'mcq_single',
+      prompt: 'Listen and choose where the conversation takes place.',
+      contextPassage: null,
+      mediaUrl: 'https://example.com/audio/track-1.mp3',
+      options: ['At a bank', 'At a pharmacy'],
+      dropdownSets: [],
+      sentences: [],
+      formFields: [],
+    },
+    {
+      id: 'l2',
+      skill: 'listening',
+      part: 2,
+      questionType: 'dropdown_match',
+      prompt: 'Listen and complete the notes.',
+      contextPassage: null,
+      mediaUrl: null,
+      options: [],
+      dropdownSets: [{ id: 'n1', prompt: 'Opening time', options: ['nine', 'ten'] }],
+      sentences: [],
+      formFields: [],
+    },
+  ],
+};
+
 export const SUBMISSION_RESULT = {
   id: 'submission-1',
   test: { id: EXAM_TEST.id, title: EXAM_TEST.title, type: 'mock' },

@@ -3,6 +3,13 @@ export const EXAM_TICK_MS = 1000;
 export const EXAM_WARNING_SECONDS = 300;
 export const EXAM_CRITICAL_SECONDS = 60;
 
+/**
+ * Official Aptis limit: a listening track may be played at most twice.
+ * Pinned to `contracts/JayContract.js#validateListeningPlaysLimit` by
+ * `tests/exam-audio-player.test.jsx`.
+ */
+export const LISTENING_PLAY_LIMIT = 2;
+
 export const INCOMPLETE_TEST_MESSAGE = 'The test response was incomplete.';
 export const DEFAULT_EXAM_ERROR_MESSAGE = 'Unable to load the exam.';
 export const DEFAULT_SUBMISSION_ERROR_MESSAGE =
@@ -33,6 +40,7 @@ const QUESTION_TYPES = Object.freeze([
  * @property {object|null} test
  * @property {Record<string, unknown>} answers
  * @property {Record<string, true>} flags
+ * @property {Record<string, number>} playCounts
  * @property {string|null} startedAt
  * @property {string|null} expiresAt
  * @property {boolean} autoSubmitted
@@ -126,6 +134,7 @@ export function createExamViewState() {
     test: null,
     answers: {},
     flags: {},
+    playCounts: {},
     startedAt: null,
     expiresAt: null,
     autoSubmitted: false,
@@ -149,6 +158,7 @@ export function withExamTest(viewState, test, now = new Date()) {
       test: null,
       answers: {},
       flags: {},
+      playCounts: {},
       startedAt: null,
       expiresAt: null,
       autoSubmitted: false,
@@ -167,6 +177,7 @@ export function withExamTest(viewState, test, now = new Date()) {
     test,
     answers: {},
     flags: {},
+    playCounts: {},
     startedAt,
     expiresAt,
     autoSubmitted: false,
@@ -188,6 +199,7 @@ export function withExamError(viewState, error = {}) {
     test: null,
     answers: {},
     flags: {},
+    playCounts: {},
     startedAt: null,
     expiresAt: null,
     autoSubmitted: false,
@@ -644,6 +656,102 @@ export function questionStatuses(viewState) {
 }
 
 /**
+ * @param {object} question
+ * @returns {boolean}
+ */
+export function isListeningTrack(question) {
+  return (
+    isPlainObject(question) &&
+    question.skill === 'listening' &&
+    typeof question.mediaUrl === 'string' &&
+    question.mediaUrl.length > 0
+  );
+}
+
+/**
+ * @param {ExamViewState} viewState
+ * @param {string} questionId
+ * @returns {number}
+ */
+export function playsUsedFor(viewState, questionId) {
+  const question = (viewState.test?.questions ?? []).find((entry) => entry.id === questionId);
+
+  if (!isListeningTrack(question)) {
+    return 0;
+  }
+
+  const stored = viewState.playCounts?.[questionId];
+
+  if (!Number.isInteger(stored) || stored < 0) {
+    return 0;
+  }
+
+  return Math.min(stored, LISTENING_PLAY_LIMIT);
+}
+
+/**
+ * @param {ExamViewState} viewState
+ * @param {string} questionId
+ * @returns {number}
+ */
+export function playsRemainingFor(viewState, questionId) {
+  return Math.max(0, LISTENING_PLAY_LIMIT - playsUsedFor(viewState, questionId));
+}
+
+/**
+ * @param {ExamViewState} viewState
+ * @param {string} questionId
+ * @returns {boolean}
+ */
+export function canPlayTrack(viewState, questionId) {
+  return playsUsedFor(viewState, questionId) < LISTENING_PLAY_LIMIT;
+}
+
+/**
+ * Records one listening play. The player calls this only after
+ * `HTMLMediaElement.play()` resolves, so a blocked autoplay never consumes a
+ * play. The official limit is authoritative here: a third call is a no-op.
+ *
+ * @param {ExamViewState} viewState
+ * @param {string} questionId
+ * @returns {ExamViewState}
+ */
+export function recordTrackPlay(viewState, questionId) {
+  const question = (viewState.test?.questions ?? []).find((entry) => entry.id === questionId);
+
+  if (viewState.status !== EXAM_STATUS.READY || !isListeningTrack(question)) {
+    return viewState;
+  }
+
+  const used = playsUsedFor(viewState, questionId);
+
+  if (used >= LISTENING_PLAY_LIMIT) {
+    return viewState;
+  }
+
+  return {
+    ...viewState,
+    playCounts: { ...(viewState.playCounts ?? {}), [questionId]: used + 1 },
+  };
+}
+
+/**
+ * @param {number} seconds
+ * @returns {string} `m:ss`
+ */
+export function formatPlayClock(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return '0:00';
+  }
+
+  const safe = Math.floor(seconds);
+  const minutes = Math.floor(safe / 60);
+  const remainder = safe % 60;
+
+  return `${minutes}:${String(remainder).padStart(2, '0')}`;
+}
+
+/**
  * @param {ExamViewState} viewState
  * @returns {{ testId: string, answers: Array<{ questionId: string, submittedAnswer: unknown }> }|null}
  */
@@ -832,6 +940,35 @@ function sanitizeFlags(test, raw) {
 }
 
 /**
+ * Only listening tracks in the loaded test can hold a play count, and the value
+ * is clamped to the official limit so an edited storage record cannot exceed it.
+ *
+ * @param {object} test
+ * @param {unknown} raw
+ * @returns {Record<string, number>}
+ */
+function sanitizePlayCounts(test, raw) {
+  if (!isPlainObject(raw)) {
+    return {};
+  }
+
+  const tracks = new Set(
+    (test.questions ?? [])
+      .filter((question) => isListeningTrack(question))
+      .map((question) => String(question.id))
+  );
+  const counts = {};
+
+  for (const [questionId, value] of Object.entries(raw)) {
+    if (tracks.has(questionId) && Number.isInteger(value) && value > 0) {
+      counts[questionId] = Math.min(value, LISTENING_PLAY_LIMIT);
+    }
+  }
+
+  return counts;
+}
+
+/**
  * @param {unknown} saved
  * @param {object} test
  * @param {Date} [now]
@@ -851,6 +988,7 @@ export function hydrateExamViewState(saved, test, now = new Date()) {
 
   const answers = sanitizeAnswers(test, saved.answers);
   const flags = sanitizeFlags(test, saved.flags);
+  const playCounts = sanitizePlayCounts(test, saved.playCounts);
   const startedAt = isIsoString(saved.startedAt) ? saved.startedAt : fresh.startedAt;
   const expiresAt = isIsoString(saved.expiresAt) ? saved.expiresAt : fresh.expiresAt;
   const submittedAt = isIsoString(saved.submittedAt) ? saved.submittedAt : null;
@@ -862,6 +1000,7 @@ export function hydrateExamViewState(saved, test, now = new Date()) {
       status: EXAM_STATUS.SUBMITTED,
       answers,
       flags,
+      playCounts,
       startedAt,
       expiresAt,
       submittedAt,
@@ -874,6 +1013,7 @@ export function hydrateExamViewState(saved, test, now = new Date()) {
     ...fresh,
     answers,
     flags,
+    playCounts,
     startedAt,
     expiresAt,
   };
